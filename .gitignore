@@ -1,0 +1,13 @@
+# Python temp scripts
+*.py
+
+# Temp JS extraction
+_s.js
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
