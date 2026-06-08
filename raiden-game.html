@@ -708,6 +708,11 @@ let waveAnnounceTimer = 0;
 let waveAnnounceText = '';
 let waveAnnounceParticles = [];
 
+let bombFlashTimer = 0;
+let stageClearTimer = 0;
+let stageClearLevel = 0;
+let autoBombUsed = false;
+
 // 作弊模式
 let godMode = false;
 
@@ -955,6 +960,7 @@ class Player {
     this.shootCooldown = 0;
     this.engineFlame = 0;
     this.tiltX = 0;
+    this.heatLevel = 0;
     this.buffs = { doubleDamage: 0, freezeAll: 0, rapidFire: 0, magnet: 0, score2x: 0 };
   }
 
@@ -1230,6 +1236,16 @@ class Player {
       }
     }
 
+    // === 武器过热辉光 ===
+    if (this.heatLevel > 0.3) {
+      const hAlpha = (this.heatLevel - 0.3) * 0.5;
+      ctx.strokeStyle = "rgba(255,120,20,"+hAlpha+")";
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(0, 0, 30, 0, Math.PI*2); ctx.stroke();
+      ctx.fillStyle = "rgba(255,200,100,"+hAlpha*0.5+")";
+      ctx.beginPath(); ctx.arc(0, 15, 6+this.heatLevel*4, 0, Math.PI*2); ctx.fill();
+    }
+
     // === 判定点 (Hitbox Indicator) ===
     if (keys['shift']) {
       ctx.fillStyle = '#0f0';
@@ -1420,7 +1436,8 @@ const BOSS_CONFIGS = [
   { // Lv2 - 隐形炮艇: 隐身突袭 + 圆形扩散 + 精确狙击
     name:'隐形炮艇', sub:'STEALTH GUNSHIP', color:'#4af', hpMul:1.0, entranceType:'fadeIn',
     attack(boss){
-      if(boss._visible&&boss.shootTimer%Math.max(5,Math.floor(12/rank))===0){
+      const dm2=difficulty==="easy"?1.5:difficulty==="hard"?0.75:1.0;
+      if(boss._visible&&boss.shootTimer%Math.max(5,Math.floor(12*dm2/rank))===0){
         // 标准三向射击
         const a=Math.atan2(player.y-boss.y,player.x-boss.x);
         for(let j=-1;j<=1;j++) enemyBullets.push(new EnemyBullet(boss.x,boss.y+20,Math.cos(a+j*0.08)*4.5*rank,Math.sin(a+j*0.08)*4.5*rank));
@@ -1497,7 +1514,8 @@ const BOSS_CONFIGS = [
     name:'导弹驱逐舰', sub:'MISSILE DESTROYER', color:'#fa0', hpMul:1.2, entranceType:'drop',
     attack(boss){
       // 五向瞄准弹幕
-      if(boss.shootTimer%Math.max(10,Math.floor(25/rank))===0){
+      const dm3=difficulty==="easy"?1.5:difficulty==="hard"?0.75:1.0;
+      if(boss.shootTimer%Math.max(10,Math.floor(25*dm3/rank))===0){
         const a=Math.atan2(player.y-boss.y,player.x-boss.x);
         for(let j=-2;j<=2;j++){
           const sa=a+j*0.2;
@@ -1580,7 +1598,8 @@ const BOSS_CONFIGS = [
     name:'能量母舰', sub:'ENERGY CARRIER', color:'#a4f', hpMul:1.5, entranceType:'rift',
     attack(boss){
       // 旋转散射
-      if(boss.shootTimer%Math.max(6,Math.floor(15/rank))===0){
+      const dm4=difficulty==="easy"?1.5:difficulty==="hard"?0.75:1.0;
+      if(boss.shootTimer%Math.max(6,Math.floor(15*dm4/rank))===0){
         const a=boss.patternTimer*0.1;
         for(let j=-2;j<=2;j++){
           const sa=a+j*0.15;
@@ -1663,8 +1682,9 @@ const BOSS_CONFIGS = [
   { // Lv5 - 核心要塞: 三阶段极致弹幕
     name:'核心要塞', sub:'CORE FORTRESS', color:'#f0f', hpMul:2.0, entranceType:'assemble',
     attack(boss){
-      const iv=boss.phase===2?5:(boss.phase===1?7:12);
-      if(boss.shootTimer%iv!==0)return;
+      const dm5=difficulty==="easy"?1.5:difficulty==="hard"?0.7:1.0;
+      const iv2=Math.max(3,Math.floor((boss.phase===2?5:(boss.phase===1?7:12))*dm5));
+      if(boss.shootTimer%iv2!==0)return;
       if(boss.phase===0){
         // 阶段1：螺旋三角 + 自机狙 + 慢速弹墙
         const a=boss.patternTimer*0.3;
@@ -2722,7 +2742,7 @@ function levelComplete() {
 
 function gameOver(won=false) {
   saveHighScore();
-  gameState=STATE.GAMEOVER;
+  gameState=STATE.GAMEOVER; stopBGM();
   const box=document.getElementById('gameOverBox');
   box.classList.toggle('won', won);
   document.getElementById('goTitle').innerHTML = won?'🏆 通关！':'💥 游戏结束';
