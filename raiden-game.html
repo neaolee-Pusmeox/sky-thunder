@@ -449,13 +449,13 @@ canvas { display: block; cursor: none; border-radius: 2px; width: 100%; height: 
       <div class="menu-mid">
         <div class="difficulty-select">
           <button class="diff-btn easy" onclick="setDifficulty('easy', this)">
-            ◉ EASY<div class="diff-desc">5命5炸 · 休闲体验</div>
+            ◉ EASY<div class="diff-desc">5命5炸 · 自动炸弹 · 休闲体验</div>
           </button>
           <button class="diff-btn normal selected" onclick="setDifficulty('normal', this)">
-            ◉ NORMAL<div class="diff-desc">3命3炸 · 标准挑战</div>
+            ◉ NORMAL<div class="diff-desc">3命3炸 · 自动炸弹 · 标准挑战</div>
           </button>
           <button class="diff-btn hard" onclick="setDifficulty('hard', this)">
-            ◉ HARD<div class="diff-desc">2命2炸 · 高手模式</div>
+            ◉ HARD<div class="diff-desc">2命2炸 · 自杀弹 · 高手模式</div>
           </button>
         </div>
         <button class="btn" onclick="startGame()">▶ 出 击</button>
@@ -659,10 +659,10 @@ function startGame() {
 }
 function pauseGame() { gameState = STATE.PAUSED; show('pauseScreen'); }
 function resumeGame() { hide('pauseScreen'); gameState = STATE.PLAYING; }
-function restartGame() { hide('gameOverScreen'); hide('pauseScreen'); initGame(); gameState = STATE.PLAYING; }
+function restartGame() { hide('gameOverScreen'); hide('pauseScreen'); stopBGM(); initGame(); initAudio(); startBGM(); gameState = STATE.PLAYING; }
 function showMenu() {
   hide('gameOverScreen'); hide('pauseScreen'); show('menuScreen');
-  gameState = STATE.MENU;
+  gameState = STATE.MENU; stopBGM();
   enemies = []; enemyBullets = []; bullets = []; powerUps = []; particles = []; floatTexts = [];
 }
 
@@ -868,6 +868,58 @@ function sfxBossLaser() {
 function sfxBossTracking() { playSound(600,'square',0.2,0.04,150); }
 function sfxBossDamage() { playSound(60,'sawtooth',0.1,0.05,30); }
 function sfxBossPhaseShift() { playSound(200,'sine',0.5,0.07,900); }
+// ==================== 程序化BGM ====================
+let bgmTimer = 0; let bgmActive = false; let bgmOscillators = [];
+function startBGM() {
+  if (!audioCtx || bgmActive) return;
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  bgmActive = true; bgmTimer = 0;
+  bgmTick();
+}
+function stopBGM() {
+  bgmActive = false;
+  for (const o of bgmOscillators) { try { o.osc.stop(); o.gain.disconnect(); } catch(e) {} }
+  bgmOscillators = [];
+}
+function bgmTick() {
+  if (!bgmActive || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  bgmOscillators = bgmOscillators.filter(o => o.expires > t);
+  const beat = bgmTimer % 32;
+  const vol = sfxVolume * 0.03;
+  if (beat === 0 || beat === 8 || beat === 16 || beat === 24) {
+    const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
+    osc.type = 'sine'; osc.frequency.setValueAtTime(55, t);
+    osc.frequency.exponentialRampToValueAtTime(30, t + 0.12);
+    gain.gain.setValueAtTime(vol * 1.5, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+    osc.connect(gain); gain.connect(audioCtx.destination);
+    osc.start(t); osc.stop(t + 0.2);
+    bgmOscillators.push({ osc, gain, expires: t + 0.3 });
+  }
+  if (beat % 4 === 0) {
+    const freq = [130, 165, 196, 220][Math.floor(beat / 8) % 4];
+    const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
+    osc.type = 'triangle'; osc.frequency.setValueAtTime(freq, t);
+    gain.gain.setValueAtTime(vol * 0.4, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+    osc.connect(gain); gain.connect(audioCtx.destination);
+    osc.start(t); osc.stop(t + 0.3);
+    bgmOscillators.push({ osc, gain, expires: t + 0.35 });
+  }
+  if (beat % 16 === 0 || beat % 16 === 8) {
+    const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
+    osc.type = 'square'; osc.frequency.setValueAtTime(330, t);
+    gain.gain.setValueAtTime(vol * 0.25, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
+    osc.connect(gain); gain.connect(audioCtx.destination);
+    osc.start(t); osc.stop(t + 0.1);
+    bgmOscillators.push({ osc, gain, expires: t + 0.15 });
+  }
+  bgmTimer++;
+  setTimeout(bgmTick, 140);
+}
+
 
 // ==================== 星云背景 ====================
 class Nebula {
@@ -991,6 +1043,9 @@ class Player {
     if ((keys['j']||keys['z']) && this.shootCooldown<=0) {
       this.shoot();
       this.shootCooldown = this.buffs.rapidFire>0 ? 1 : (currentWeapon===2 ? 2 : currentWeapon===3 ? 22 : currentWeapon===4 ? 2 : 5);
+      this.heatLevel = Math.min(1.0, this.heatLevel + 0.06);
+    } else {
+      this.heatLevel = Math.max(0, this.heatLevel - 0.02);
     }
     if ((keys['k']||keys['x']) && bombs>0) { useBomb(); if (!godMode) bombs--; else bombs=5; keys['k']=false; keys['x']=false; }
     if (keys['m']) { keys['m']=false; cycleWeapon(); }
@@ -2042,7 +2097,7 @@ class Enemy {
         case 'scout':
           this.y+=this.speed*freezeMult;
           this.x+=Math.sin(this.moveTimer*0.05)*1.2;
-          if (this.canShoot && this.shootTimer>Math.max(8, (40-this.level*5)/rank)) { this.enemyShoot(0, 3.5*rank); this.shootTimer=0; }
+          if (this.canShoot && this.shootTimer>Math.max(8, (40-this.level*5)/rank)) { this.enemyShoot(0, 3.5*rank); this.shootTimer=0; for(let m=0;m<3;m++) particles.push(new Particle(this.x, this.y+this.h/2, (Math.random()-0.5)*2, (Math.random()-0.5)*2-1, 8, '#ff8', 1.5)); }
           break;
         case 'tank':
           this.y+=this.speed*freezeMult;
@@ -2159,6 +2214,7 @@ class Enemy {
   }
 
   hit(dmg) {
+    if (!this.alive) return false; // 防止同一帧多次触发死亡逻辑
     // 护盾吸收
     if (this.shieldHits>0) {
       this.shieldHits--; this.flashTimer=6;
@@ -2177,6 +2233,14 @@ class Enemy {
         for (let i=0; i<20; i++) particles.push(new Particle(this.x+(Math.random()-0.5)*this.w, this.y+(Math.random()-0.5)*this.h, (Math.random()-0.5)*5, (Math.random()-0.5)*5, 18, '#0ff', 2));
         spawnFloatText(this.x, this.y-25, 'BREAK! x'+this.currentSegment, '#0ff');
         initAudio(); sfxBossRing();
+      }
+    }
+        // HARD难度：敌人死亡释放自杀弹
+    if (this.hp <= 0 && difficulty === 'hard' && this.type !== 'boss' && this.type !== 'turret') {
+      const bulletCount = this.type === 'tank' ? 8 : this.type === 'speeder' ? 6 : 4;
+      for (let i = 0; i < bulletCount; i++) {
+        const a = i * Math.PI * 2 / bulletCount + Math.random() * 0.3;
+        addEnemyBullet(this.x, this.y, Math.cos(a) * 2.5, Math.sin(a) * 2.5, '#f84', 3.5);
       }
     }
     if (this.hp<=0) {
@@ -2609,23 +2673,35 @@ function rectsCollide(a,b) { return a.x<b.x+b.w && a.x+a.w>b.x && a.y<b.y+b.h &&
 
 // ==================== 辅助函数 ====================
 function addBullet(x,y,vx,vy,color,dmg,size,length,homing) { bullets.push(new Bullet(x,y,vx,vy,color,dmg,size,length,homing)); }
-function addEnemyBullet(x,y,vx,vy,color='#f44',size=3.5) { enemyBullets.push(new EnemyBullet(x,y,vx,vy,color,size)); }
+function addEnemyBullet(x,y,vx,vy,color='#f44',size=3.5) {
+  const diffSize = difficulty==='easy'?size*0.8:difficulty==='hard'?size*1.2:size;
+  enemyBullets.push(new EnemyBullet(x,y,vx,vy,color,diffSize));
+}
 function addShootEffect(x,y) { particles.push(new Particle(x,y-15,(Math.random()-0.5)*1.5,-2.5,10,'#0ff',1.5)); }
 
 function useBomb() {
   initAudio(); sfxBomb();
-  shakeAmount=6; shakeDuration=14;
+  bombFlashTimer = 8;
+  shakeAmount = 8; shakeDuration = 18;
   rank = Math.max(1.0, rank - 0.25); // 放炸弹降低Rank
   // 全屏爆炸
-  for (let i=0; i<80; i++) particles.push(new Particle(Math.random()*W, Math.random()*H, (Math.random()-0.5)*3, -Math.random()*4, 30, '#fff', 3+Math.random()*5));
-  for (let i=0; i<40; i++) particles.push(new Particle(Math.random()*W, Math.random()*H, (Math.random()-0.5)*2, -Math.random()*2, 20, '#0ff', 1+Math.random()*3));
-  enemyBullets=[];
-  for (const enemy of enemies) {
-    if (enemy.hit(20)) {} else {
-      for (let i=0; i<10; i++) particles.push(new Particle(enemy.x, enemy.y, (Math.random()-0.5)*5, (Math.random()-0.5)*5, 18, '#ff0', 2));
+  for (let i = 0; i < 80; i++) particles.push(new Particle(Math.random() * W, Math.random() * H, (Math.random() - 0.5) * 3, -Math.random() * 4, 30, '#fff', 3 + Math.random() * 5));
+  for (let i = 0; i < 40; i++) particles.push(new Particle(Math.random() * W, Math.random() * H, (Math.random() - 0.5) * 2, -Math.random() * 2, 20, '#0ff', 1 + Math.random() * 3));
+  // 冲击波环 (3层同心圆)
+  for (let r = 0; r < 3; r++) {
+    const ringR = 80 + r * 60;
+    for (let i = 0; i < 24; i++) {
+      const a = i * Math.PI * 2 / 24;
+      particles.push(new Particle(W / 2, H / 2, Math.cos(a) * (2 + r * 0.5), Math.sin(a) * (2 + r * 0.5), 15 + r * 5, r === 0 ? '#fff' : r === 1 ? '#0ff' : '#08f', 1.5));
     }
   }
-  combo=Math.max(0, combo-Math.floor(combo/4));
+  enemyBullets = [];
+  for (const enemy of enemies) {
+    if (enemy.hit(25)) { } else {
+      for (let i = 0; i < 10; i++) particles.push(new Particle(enemy.x, enemy.y, (Math.random() - 0.5) * 5, (Math.random() - 0.5) * 5, 18, '#ff0', 2));
+    }
+  }
+  combo = Math.max(0, combo - Math.floor(combo / 4));
 }
 
 function cycleWeapon() {
@@ -2722,17 +2798,20 @@ function checkWaveComplete() {
 }
 
 function levelComplete() {
-  score+=Math.floor(2000*level*diffCfg.scoreMul);
-  lives=Math.min(lives+1, 5);
-  bombs=Math.min(bombs+2, 5);
-  level++; wave=0; bossActive=false; combo=0;
-  enemyBullets=[]; enemies=[];
-  waveEnemiesRemaining=1;
+  const levelBonus = Math.floor(2000 * level * diffCfg.scoreMul);
+  score += levelBonus;
+  lives = Math.min(lives + 1, 5);
+  bombs = Math.min(bombs + 2, 5);
+  player.heatLevel = 0;
+  stageClearTimer = 90; stageClearLevel = level;
+  level++; wave = 0; bossActive = false; combo = 0;
+  enemyBullets = []; enemies = [];
+  waveEnemiesRemaining = 1;
   getScene();
   // 升级特效
-  for (let i=0; i<100; i++) particles.push(new Particle(W/2, H/2, (Math.random()-0.5)*10, (Math.random()-0.5)*10, 45+Math.random()*35, ['#0ff','#ff0','#f0f','#fff'][Math.floor(Math.random()*4)], 2+Math.random()*5));
+  for (let i = 0; i < 100; i++) particles.push(new Particle(W / 2, H / 2, (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10, 45 + Math.random() * 35, ['#0ff', '#ff0', '#f0f', '#fff'][Math.floor(Math.random() * 4)], 2 + Math.random() * 5));
   // 关卡过渡动画
-  if (level>5) { gameOver(true); }
+  if (level > 5) { gameOver(true); }
   else {
     transitionState = 1;
     transitionTimer = 0;
@@ -2758,6 +2837,15 @@ function gameOver(won=false) {
   document.getElementById('statLevel').textContent=level;
   document.getElementById('statKills').textContent=killedCount;
   document.getElementById('statCombo').textContent=maxCombo;
+    // 字母评级
+  let grade, gradeColor;
+  const gradeScore = won ? score * 1.5 : score;
+  if (won && maxCombo >= 60 && lives >= 3) { grade = 'S'; gradeColor = '#ff0'; }
+  else if (won || gradeScore > 50000) { grade = 'A'; gradeColor = '#0f0'; }
+  else if (gradeScore > 20000) { grade = 'B'; gradeColor = '#0ff'; }
+  else if (gradeScore > 8000) { grade = 'C'; gradeColor = '#f80'; }
+  else { grade = 'D'; gradeColor = '#f44'; }
+  document.getElementById('goTitle').innerHTML += ' <span style="color:' + gradeColor + ';font-size:36px;text-shadow:0 0 20px ' + gradeColor + '">[' + grade + ']</span>';
   show('gameOverScreen');
 }
 
@@ -2908,7 +2996,7 @@ function initGame() {
   bossActive=false; killedCount=0; comboResetTimer=0; comboBarTimer=0; comboMultiplier=1.0; comboMilestoneTimer=0; comboMilestoneLevel=0;
   comboPopupTimer=0; weaponNotifyTimer=0;
   rank = 1.0;
-  bossWarningTimer=0; waveAnnounceTimer=0; waveAnnounceText=''; waveAnnounceParticles=[];
+  bossWarningTimer=0; waveAnnounceTimer=0; waveAnnounceText=''; waveAnnounceParticles=[]; bombFlashTimer=0; stageClearTimer=0; autoBombUsed=false;
   spawnWave();
 }
 
@@ -2977,7 +3065,14 @@ function gameLoop() {
   if (waveAnnounceTimer <= 0 && waveAnnounceParticles.length > 0) {
     waveAnnounceParticles = [];
   }
-  // Combo milestone celebration - screen flash
+  // Bomb flash - screen flash on bomb use
+  if (bombFlashTimer > 0) {
+    const bfAlpha = bombFlashTimer / 8 * 0.3;
+    ctx.fillStyle = 'rgba(255,255,255,' + bfAlpha + ')';
+    ctx.fillRect(0, 0, W, H);
+    bombFlashTimer--;
+  }
+    // Combo milestone celebration - screen flash
   if (comboMilestoneTimer > 0) {
     const msAlpha = comboMilestoneTimer > 25 ? 0.15 : comboMilestoneTimer / 25 * 0.15;
     ctx.fillStyle = `rgba(255,255,0,${msAlpha})`;
@@ -3000,29 +3095,7 @@ function gameLoop() {
       ctx.restore();
     }
   }
-  // Combo milestone celebration - screen flash
-  if (comboMilestoneTimer > 0) {
-    const msAlpha = comboMilestoneTimer > 25 ? 0.15 : comboMilestoneTimer / 25 * 0.15;
-    ctx.fillStyle = `rgba(255,255,0,${msAlpha})`;
-    ctx.fillRect(0, 0, W, H);
-    // Combo milestone text
-    if (comboMilestoneLevel > 0) {
-      ctx.save();
-      const msScale = 1 + (40 - comboMilestoneTimer) * 0.015;
-      ctx.globalAlpha = comboMilestoneTimer > 30 ? 1 : comboMilestoneTimer / 30;
-      ctx.textAlign = 'center';
-      ctx.translate(W/2, H/3 - 40);
-      ctx.scale(msScale, msScale);
-      ctx.font = 'bold 36px "Orbitron","Courier New",monospace';
-      ctx.fillStyle = '#000';
-      ctx.fillText(`COMBO x${comboMilestoneLevel}!`, 2, 2);
-      ctx.shadowColor = '#ff0'; ctx.shadowBlur = 25;
-      ctx.fillStyle = '#ff0';
-      ctx.fillText(`COMBO x${comboMilestoneLevel}!`, 0, 0);
-      ctx.shadowBlur = 0;
-      ctx.restore();
-    }
-  }
+
 
   // Rank 动态难度：随存活时间缓慢增加
   rank = Math.min(MAX_RANK, rank + 0.00015);
@@ -3111,7 +3184,7 @@ function gameLoop() {
 
   // 擦弹检测 (Graze)
   const grazeBox={x:player.x-24, y:player.y-30, w:48, h:60};
-  const pH={x:player.x-9, y:player.y-14, w:18, h:28};
+  const pH={x:player.x-7, y:player.y-11, w:14, h:22};
   for (const bullet of enemyBullets) {
     if (!bullet.grazed && rectsCollide(grazeBox, bullet.hitbox()) && !rectsCollide(pH, bullet.hitbox())) {            bullet.grazed=true; comboResetTimer=0; comboBarTimer=0; comboMultiplier=1.0; comboMilestoneTimer=0; comboMilestoneLevel=0;
             initAudio(); sfxGraze(); spawnFloatText(bullet.x,bullet.y,'GRAZE','#0ff');
@@ -3174,6 +3247,30 @@ function gameLoop() {
   for (const p of hudParticles) p.draw(ctx);
 
   drawHUD();
+
+  // === 关卡结算展示 ===
+  if (stageClearTimer > 0) {
+    stageClearTimer--;
+    const scAlpha = stageClearTimer > 70 ? 1 : stageClearTimer > 50 ? 1 : stageClearTimer / 50;
+    const scScale = 1 + (90 - stageClearTimer) * 0.002;
+    ctx.save();
+    ctx.globalAlpha = scAlpha;
+    ctx.textAlign = 'center';
+    ctx.translate(W / 2, H / 2 - 40);
+    ctx.scale(scScale, scScale);
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(-150, -50, 300, 100);
+    ctx.strokeStyle = '#0ff'; ctx.lineWidth = 2;
+    ctx.strokeRect(-150, -50, 300, 100);
+    ctx.font = 'bold 28px "Orbitron","Courier New",monospace';
+    ctx.fillStyle = '#0ff'; ctx.shadowColor = '#0ff'; ctx.shadowBlur = 15;
+    ctx.fillText('STAGE ' + stageClearLevel + ' CLEAR', 0, -15);
+    ctx.font = '14px "Courier New",monospace';
+    ctx.fillStyle = '#ff0'; ctx.shadowColor = '#ff0'; ctx.shadowBlur = 8;
+    ctx.fillText('+1 LIFE  +2 BOMBS', 0, 20);
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
 
   // === 波次公告 ===
   if (waveAnnounceTimer > 0) {
@@ -3301,13 +3398,24 @@ function gameLoop() {
 function playerHit() {
   if (godMode) return; // 作弊模式无敌
   if (player.invincible>0) return;
+  // 自动炸弹：EASY/NORMAL被击时自动消耗炸弹（扣1命+1炸弹，换120帧无敌）
+  if (difficulty !== 'hard' && bombs > 0 && !autoBombUsed) {
+    autoBombUsed = true;
+    useBomb(); bombs--;
+    lives--; player.invincible = 120; player.heatLevel = 0;
+    combo = Math.max(0, combo - 3);
+    rank = Math.max(1.0, rank - 0.1);
+    autoBombUsed = false;
+    if (lives <= 0) { gameOver(false); return; }
+    return;
+  }
   initAudio(); sfxHit();
-  lives--; player.invincible=100;
-  combo=Math.max(0,combo-5);
+  lives--; player.invincible = 100; player.heatLevel = 0;
+  combo = Math.max(0, combo - 5);
   rank = Math.max(1.0, rank - 0.2); // 死命大幅降低Rank
-  shakeAmount=6; shakeDuration=10;
-  for (let i=0; i<25; i++) particles.push(new Particle(player.x, player.y, (Math.random()-0.5)*5, (Math.random()-0.5)*5, 22, '#f44', 2+Math.random()*3));
-  if (lives<=0) gameOver(false);
+  shakeAmount = 6; shakeDuration = 10;
+  for (let i = 0; i < 25; i++) particles.push(new Particle(player.x, player.y, (Math.random() - 0.5) * 5, (Math.random() - 0.5) * 5, 22, '#f44', 2 + Math.random() * 3));
+  if (lives <= 0) gameOver(false);
 }
 
 function applyPowerUp(pu) {

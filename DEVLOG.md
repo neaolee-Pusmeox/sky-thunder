@@ -4,6 +4,37 @@
 
 ---
 
+## 📅 2025-06-08 热修复 — v1.1 补丁
+
+**修复致命BUG：死亡后游戏卡在背景页，无法显示Game Over画面**
+
+### 🐛 根因分析
+- `gameOver()` 函数中调用 `stopBGM()` 但该函数从未被正确定义（v1.1 的 BGM 代码插入因引号格式不匹配而静默失败）
+- `stopBGM()` ReferenceError 导致 `gameOver()` 崩溃在 `show('gameOverScreen')` 之前
+- 游戏状态设置为 STATE.GAMEOVER，但 DOM overlay 从未显示 → 玩家看到全黑背景+星星
+
+### 🔧 修复内容 (本次会话)
+1. **BGM 函数重新插入**: 使用精确字符串匹配，`startBGM/stopBGM/bgmTick` 正确写入
+2. **playerHit() 自动炸弹**: EASY/NORMAL 被击时自动消耗炸弹（扣1命+1炸弹，120帧无敌）
+3. **useBomb() 炸弹强化**: bombFlashTimer=8 + 3层冲击波环 + 伤害20→25
+4. **levelComplete() 关卡结算**: stageClearTimer=90 + heatLevel重置
+5. **showMenu() 停止BGM**: 返回菜单时调用 stopBGM()
+6. **武器过热追踪**: 射击时 heatLevel +0.06/帧，停火时 -0.02/帧
+7. **HARD 自杀弹**: 敌人死亡释放环形弹幕（Tank 8发, Speeder 6发, 其余4发），使用 addEnemyBullet 确保难度缩放
+8. **难度子弹尺寸**: EASY ×0.75, HARD ×1.15（addEnemyBullet 中 diffSize 计算）
+9. **关卡结算浮层**: Stage Clear 文字动画（缩放+淡出），显示奖励信息
+10. **hit() 双重触发防护**: 添加 `if (!this.alive) return false` 守卫，防止多弹同时命中导致重复死亡逻辑
+11. **重复 combo 里程碑块移除**: 清理游戏循环中两个重复的 combo 渲染块
+12. **难度描述更新**: EASY"自动炸弹", NORMAL"自动炸弹", HARD"自杀弹"
+13. **initGame() 变量重置**: bombFlashTimer/stageClearTimer/autoBombUsed 在重开时清零
+
+### 技术教训
+- Windows 环境下 Node.js 读写文件产生 `\r\n` 换行符，与 `\n` 的字符串匹配会静默失败
+- 解决方案：使用 indexOf + substring 做字节级替换，避免依赖换行符匹配
+- str_replace 工具对大型单文件 HTML 的可靠性不如文件级 Node.js 脚本
+
+---
+
 ## 📅 2025-07-17 开发总结 — v1.1 品质打磨版
 
 **本轮成果 — 10项重大功能 + 6项修复，游戏全面现代化**
