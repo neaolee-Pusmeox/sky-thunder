@@ -428,6 +428,155 @@ canvas { display: block; cursor: none; border-radius: 2px; width: 100%; height: 
   color: #888;
   margin-top: 2px;
 }
+
+/* ========== 触屏操控 ========== */
+#touchControls {
+  position: absolute;
+  bottom: 0; left: 0; right: 0; top: 0;
+  pointer-events: none;
+  z-index: 10;
+  display: none;
+}
+#touchControls.active {
+  display: block;
+}
+/* 虚拟摇杆 */
+#joyBase {
+  position: absolute;
+  bottom: 30px; left: 24px;
+  width: 130px; height: 130px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(0,255,255,0.08) 0%, rgba(0,100,255,0.05) 60%, rgba(0,50,200,0.02) 100%);
+  border: 2px solid rgba(0,200,255,0.25);
+  pointer-events: all;
+  touch-action: none;
+}
+#joyThumb {
+  position: absolute;
+  top: 50%; left: 50%;
+  width: 56px; height: 56px;
+  margin-left: -28px; margin-top: -28px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, rgba(255,255,255,0.25), rgba(0,200,255,0.18));
+  border: 2px solid rgba(0,255,255,0.4);
+  pointer-events: none;
+  transition: none;
+  box-shadow: 0 0 15px rgba(0,200,255,0.3);
+}
+/* 方向指示灯 */
+#dirIndicator {
+  position: absolute;
+  top: 50%; left: 50%;
+  width: 8px; height: 8px;
+  margin-left: -4px; margin-top: -4px;
+  border-radius: 50%;
+  background: rgba(0,255,255,0.6);
+  pointer-events: none;
+  box-shadow: 0 0 8px rgba(0,255,255,0.5);
+}
+/* 自动射击开关 */
+#autoShootToggle {
+  position: absolute;
+  bottom: 170px; right: 30px;
+  width: 60px; height: 34px;
+  background: rgba(255,255,255,0.06);
+  border: 2px solid rgba(0,255,255,0.3);
+  border-radius: 17px;
+  pointer-events: all;
+  touch-action: none;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+#autoShootToggle.on {
+  background: rgba(0,255,100,0.15);
+  border-color: rgba(0,255,100,0.6);
+  box-shadow: 0 0 15px rgba(0,255,100,0.3);
+}
+#autoShootKnob {
+  position: absolute;
+  top: 3px; left: 3px;
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, rgba(255,255,255,0.4), rgba(0,200,255,0.3));
+  border: 1px solid rgba(0,255,255,0.5);
+  pointer-events: none;
+  transition: left 0.2s;
+}
+#autoShootToggle.on #autoShootKnob {
+  left: 29px;
+  background: radial-gradient(circle at 35% 35%, rgba(255,255,255,0.5), rgba(0,255,100,0.4));
+  border-color: rgba(0,255,100,0.7);
+  box-shadow: 0 0 10px rgba(0,255,100,0.4);
+}
+#autoShootLabel {
+  position: absolute;
+  bottom: 175px; right: 100px;
+  color: rgba(255,255,255,0.5);
+  font-family: Orbitron, Courier New, monospace;
+  font-size: 9px;
+  letter-spacing: 1px;
+  pointer-events: none;
+  text-align: right;
+  line-height: 1.2;
+}
+#autoShootLabel span {
+  display: block;
+  color: rgba(0,255,200,0.7);
+  font-size: 10px;
+  font-weight: 700;
+}
+/* 炸弹按钮 */
+#bombBtn {
+  position: absolute;
+  bottom: 36px; right: 24px;
+  width: 72px; height: 72px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255,60,40,0.2) 0%, rgba(255,100,40,0.1) 60%, rgba(200,40,20,0.05) 100%);
+  border: 2px solid rgba(255,80,40,0.4);
+  pointer-events: all;
+  touch-action: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 0 20px rgba(255,60,40,0.2);
+  transition: all 0.1s;
+}
+#bombBtn:active, #bombBtn.pressed {
+  background: radial-gradient(circle, rgba(255,120,40,0.4) 0%, rgba(255,160,60,0.25) 60%, rgba(255,80,20,0.15) 100%);
+  border-color: rgba(255,200,100,0.7);
+  box-shadow: 0 0 35px rgba(255,100,40,0.5);
+  transform: scale(0.92);
+}
+#bombBtn .bomb-icon {
+  font-size: 28px;
+  color: rgba(255,100,50,0.9);
+  text-shadow: 0 0 15px rgba(255,80,40,0.6);
+  pointer-events: none;
+  line-height: 1;
+}
+#bombBtn .bomb-count {
+  position: absolute;
+  top: -6px; right: -6px;
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  background: rgba(0,0,0,0.6);
+  border: 1px solid rgba(255,200,100,0.5);
+  color: #ff0;
+  font-size: 11px;
+  font-family: Orbitron, monospace;
+  font-weight: 700;
+  text-align: center;
+  line-height: 20px;
+  pointer-events: none;
+}
+@media (max-width: 500px) {
+  #touchControls { display: none; }
+  #touchControls.active { display: block; }
+}
+@media (min-width: 501px) {
+  #touchControls { display: none !important; }
+}
 </style>
 </head>
 <body>
@@ -584,7 +733,23 @@ canvas { display: block; cursor: none; border-radius: 2px; width: 100%; height: 
         <button class="btn btn-sm" onclick="showMenu()" style="margin-top:10px">返 回 菜 单</button>
       </div>
     </div>
+  </div>
+  <!-- 触屏操控 -->
+  <div id="touchControls">
+    <div id="joyBase">
+      <div id="dirIndicator"></div>
+      <div id="joyThumb"></div>
+    </div>
+    <div id="autoShootLabel">AUTO<br><span>FIRE</span></div>
+    <div id="autoShootToggle">
+      <div id="autoShootKnob"></div>
+    </div>
+    <div id="bombBtn">
+      <span class="bomb-icon">💣</span>
+      <span class="bomb-count" id="bombCount">3</span>
+    </div>
   </div>
+
 </div>
 
 <script>
@@ -635,7 +800,133 @@ window.addEventListener('keydown', e => {
 });
 window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; e.preventDefault(); });
 
-// UI
+
+
+// ==================== 触屏操控系统 ====================
+let touchJoystick = { active: false, id: null, baseX: 0, baseY: 0, dx: 0, dy: 0 };
+let autoShootOn = false;
+
+function updateTouchControlsVisibility() {
+  const tc = document.getElementById("touchControls");
+  if (!tc) return;
+  if (gameState === STATE.PLAYING) {
+    tc.classList.add("active");
+    const bc = document.getElementById("bombCount");
+    if (bc) bc.textContent = bombs;
+  } else {
+    tc.classList.remove("active");
+  }
+}
+
+const joyBase = document.getElementById("joyBase");
+const joyThumb = document.getElementById("joyThumb");
+if (joyBase) {
+  joyBase.addEventListener("touchstart", e => {
+    e.preventDefault();
+    if (gameState !== STATE.PLAYING) return;
+    const t = e.changedTouches[0];
+    touchJoystick.active = true;
+    touchJoystick.id = t.identifier;
+    const rect = joyBase.getBoundingClientRect();
+    touchJoystick.baseX = rect.left + rect.width / 2;
+    touchJoystick.baseY = rect.top + rect.height / 2;
+    touchJoystick.dx = 0;
+    touchJoystick.dy = 0;
+  }, { passive: false });
+
+  joyBase.addEventListener("touchmove", e => {
+    e.preventDefault();
+    if (!touchJoystick.active) return;
+    for (let i = 0; i < e.changedTouches.length; i++) {
+      if (e.changedTouches[i].identifier === touchJoystick.id) {
+        const t = e.changedTouches[i];
+        const dx = t.clientX - touchJoystick.baseX;
+        const dy = t.clientY - touchJoystick.baseY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const maxDist = 45;
+        if (dist > maxDist) {
+          touchJoystick.dx = (dx / dist) * maxDist;
+          touchJoystick.dy = (dy / dist) * maxDist;
+        } else { touchJoystick.dx = dx; touchJoystick.dy = dy; }
+        if (joyThumb) joyThumb.style.transform = `translate(${touchJoystick.dx}px, ${touchJoystick.dy}px)`;
+        break;
+      }
+    }
+  }, { passive: false });
+
+  joyBase.addEventListener("touchend", e => {
+    e.preventDefault();
+    for (let i = 0; i < e.changedTouches.length; i++) {
+      if (e.changedTouches[i].identifier === touchJoystick.id) {
+        touchJoystick.active = false;
+        touchJoystick.dx = 0; touchJoystick.dy = 0;
+        if (joyThumb) joyThumb.style.transform = "translate(0px, 0px)";
+        break;
+      }
+    }
+  }, { passive: false });
+
+  joyBase.addEventListener("touchcancel", e => {
+    touchJoystick.active = false;
+    touchJoystick.dx = 0; touchJoystick.dy = 0;
+    if (joyThumb) joyThumb.style.transform = "translate(0px, 0px)";
+  });
+}
+
+const autoToggle = document.getElementById("autoShootToggle");
+if (autoToggle) {
+  autoToggle.addEventListener("touchstart", e => {
+    e.preventDefault();
+    if (gameState !== STATE.PLAYING) return;
+    autoShootOn = !autoShootOn;
+    autoToggle.classList.toggle("on", autoShootOn);
+  }, { passive: false });
+  autoToggle.addEventListener("click", e => {
+    if (gameState !== STATE.PLAYING) return;
+    autoShootOn = !autoShootOn;
+    autoToggle.classList.toggle("on", autoShootOn);
+  });
+}
+
+const bombBtnEl = document.getElementById("bombBtn");
+if (bombBtnEl) {
+  bombBtnEl.addEventListener("touchstart", e => {
+    e.preventDefault();
+    if (gameState !== STATE.PLAYING || bombs <= 0) return;
+    bombBtnEl.classList.add("pressed");
+    useBomb();
+    if (!godMode) bombs--; else bombs = 5;
+    const bc = document.getElementById("bombCount");
+    if (bc) bc.textContent = bombs;
+    if (navigator.vibrate) navigator.vibrate(30);
+    setTimeout(() => bombBtnEl.classList.remove("pressed"), 200);
+  }, { passive: false });
+  bombBtnEl.addEventListener("click", e => {
+    if (gameState !== STATE.PLAYING || bombs <= 0) return;
+    useBomb();
+    if (!godMode) bombs--; else bombs = 5;
+    const bc = document.getElementById("bombCount");
+    if (bc) bc.textContent = bombs;
+  });
+}
+
+function applyTouchJoystick() {
+  keys["arrowleft"]=keys["arrowright"]=keys["arrowup"]=keys["arrowdown"]=false;
+  keys["a"]=keys["d"]=keys["w"]=keys["s"]=false;
+  if (!touchJoystick.active) return;
+  const deadZone = 10;
+  const dx = Math.abs(touchJoystick.dx) > deadZone ? touchJoystick.dx : 0;
+  const dy = Math.abs(touchJoystick.dy) > deadZone ? touchJoystick.dy : 0;
+  keys["arrowleft"] = dx < -5; keys["arrowright"] = dx > 5;
+  keys["arrowup"] = dy < -5; keys["arrowdown"] = dy > 5;
+  keys["a"] = dx < -5; keys["d"] = dx > 5;
+  keys["w"] = dy < -5; keys["s"] = dy > 5;
+}
+
+function applyAutoShoot() {
+  keys["j"] = autoShootOn;
+  keys["z"] = autoShootOn;
+}// UI
 function show(id) { document.getElementById(id).style.display = 'flex'; }
 function hide(id) { document.getElementById(id).style.display = 'none'; }
 function toggleHelp() {
@@ -3124,6 +3415,10 @@ function drawStageTransition() {
 
 // ==================== 初始化 ====================
 function initGame() {
+  autoShootOn = false;
+  const at = document.getElementById("autoShootToggle"); if(at) at.classList.remove("on");
+  const jt = document.getElementById("joyThumb"); if(jt) jt.style.transform = "translate(0px, 0px)";
+  touchJoystick.active = false; touchJoystick.dx = 0; touchJoystick.dy = 0;
   godMode = false; // 重置作弊模式
   diffCfg = DIFFICULTY[difficulty];
   player=new Player();
@@ -3182,7 +3477,11 @@ function gameLoop() {
   ctx.fillRect(0, 0, W, H);
 
   // 更新
-  player.update();
+  applyTouchJoystick();
+  applyAutoShoot();
+  updateTouchControlsVisibility();
+
+  layer.update();
   bullets=bullets.filter(b=>b.update() && b.alive !== false);
   enemyBullets=enemyBullets.filter(b=>b.update());
   const enemiesBefore=enemies.length;
