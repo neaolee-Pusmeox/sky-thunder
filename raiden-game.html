@@ -479,7 +479,7 @@ canvas { display: block; cursor: none; border-radius: 2px; width: 100%; height: 
         <div style="margin-bottom:12px;border-bottom:1px solid rgba(255,255,255,0.08);padding-bottom:10px;">
           <div style="color:#ff0;font-size:12px;font-weight:700;margin-bottom:5px;font-family:'Orbitron','Courier New',monospace;letter-spacing:2px;">🎯 游戏目标</div>
           <div style="color:#aaa;font-size:11px;line-height:1.7;font-family:'Courier New',monospace;">
-            穿越 <span style="color:#0ff;">5大关卡</span>，击败最终 <span style="color:#f0f;">BOSS</span> 即可通关。
+            穿越 <span style="color:#0ff;">7大关卡</span>，击败最终 <span style="color:#fff;">湮灭之神</span> 即可通关。
             每关有 <span style="color:#0ff;">5波敌人</span> + <span style="color:#f0f;">1个BOSS</span>，清屏后自动推进。
           </div>
         </div>
@@ -973,7 +973,8 @@ class Star {
     if (scene.starColorBase === 0) c = this.speed > 3 ? '200,230,255' : this.speed > 1.5 ? '180,200,240' : '140,170,210';
     else if (scene.starColorBase === 1) c = this.speed > 3 ? '220,200,255' : this.speed > 1.5 ? '200,180,240' : '160,140,220';
     else if (scene.starColorBase === 2) c = this.speed > 3 ? '255,200,180' : this.speed > 1.5 ? '240,180,160' : '220,160,140';
-    else c = this.speed > 3 ? '255,240,200' : this.speed > 1.5 ? '240,220,180' : '220,200,160';
+    else if (scene.starColorBase === 3) c = this.speed > 3 ? '255,240,200' : this.speed > 1.5 ? '240,220,180' : '220,200,160';
+    else c = this.speed > 3 ? '255,255,220' : this.speed > 1.5 ? '240,240,200' : '220,220,180';
     ctx.fillStyle = `rgba(${c},${alpha})`;
     ctx.fillRect(this.x, this.y, this.size, this.size * (1.5 + this.speed * 0.3));
   }
@@ -1822,6 +1823,100 @@ const BOSS_CONFIGS = [
       if(boss.phase>=1){ ctx.strokeStyle=boss.phase===2?'#f0f':'#a0a'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(0,-8);ctx.lineTo(0,22); ctx.stroke(); }
     }
   }
+,
+  { // Lv6 - 时间扭曲者: 时间操控 + 快慢弹 + 时停区域 + 逆向弹
+    name:'时间扭曲者', sub:'TIME DISTORTER', color:'#8f8', hpMul:1.6, entranceType:'wormhole',
+    attack(boss){
+      const dm6=difficulty==="easy"?1.5:difficulty==="hard"?0.75:1.0;
+      const iv6=Math.max(5,Math.floor(16*dm6/rank));
+      if(boss.shootTimer%iv6!==0)return;
+      if(boss.phase===0){
+        const a=boss.patternTimer*0.12;
+        for(let i=0;i<6;i++){const sa=a+i*Math.PI*2/6;const spd=i%2===0?4.5:1.8;enemyBullets.push(new EnemyBullet(boss.x,boss.y+20,Math.cos(sa)*spd*rank,Math.sin(sa)*spd*rank));}
+        if(boss.specialTimer%150===0){
+          const sx=boss.x+Math.sin(boss.specialTimer*0.03)*120,sy=140+Math.random()*200;
+          for(let i=0;i<12;i++){const a=i*Math.PI*2/12;enemyBullets.push(new EnemyBullet(sx,sy,Math.cos(a)*1.5*rank,Math.sin(a)*1.5*rank,'#0f0',4.5));}
+          if(!boss._timeZones)boss._timeZones=[];boss._timeZones.push({x:sx,y:sy,life:180});
+        }
+        const pa=Math.atan2(player.y-boss.y,player.x-boss.x);
+        for(let s of[-0.12,0,0.12])enemyBullets.push(new EnemyBullet(boss.x,boss.y+20,Math.cos(pa+s)*4*rank,Math.sin(pa+s)*4*rank,'#0f8',4));
+      }else{
+        for(let i=0;i<8;i++){const a=boss.patternTimer*0.15+i*Math.PI*2/8;enemyBullets.push(new EnemyBullet(boss.x,boss.y+20,Math.cos(a)*3*rank,Math.sin(a)*3*rank));}
+        if(boss.specialTimer%60===0)for(let i=0;i<8;i++){const a=i*Math.PI*2/8+boss.patternTimer*0.05;enemyBullets.push(new EnemyBullet(boss.x,boss.y+25,Math.cos(a)*5*rank,Math.sin(a)*5*rank,'#f44',5));}
+        if(boss.specialTimer%120===0){initAudio();sfxBossPhaseShift();for(let d=0;d<3;d++){const dx=boss.x+(Math.random()-0.5)*100,dy=boss.y+(Math.random()-0.5)*60;for(let i=0;i<6;i++){const a=i*Math.PI*2/6;enemyBullets.push(new EnemyBullet(dx,dy,Math.cos(a)*2.5*rank,Math.sin(a)*2.5*rank,'#8f8',3.5));}}}
+        if(!boss._laserAngle)boss._laserAngle=0;boss._laserAngle+=0.06;
+        if(boss.specialTimer%3===0){const lx=boss.x+Math.cos(boss._laserAngle)*45,ly=boss.y+Math.sin(boss._laserAngle)*45;enemyBullets.push(new EnemyBullet(lx,ly,Math.cos(boss._laserAngle)*2*rank,Math.sin(boss._laserAngle)*2*rank,'#0ff',3.5));}
+      }
+      if(boss.hp/boss.maxHp<0.5&&boss.specialTimer%2===0){const dx=boss.x-player.x,dy=boss.y-player.y,dist=Math.sqrt(dx*dx+dy*dy);if(dist>0&&dist<300){player.x+=dx/dist*0.15;player.y+=dy/dist*0.15;}}
+    },
+    update(boss){
+      const hpRatio=boss.hp/boss.maxHp;boss.phase=hpRatio<0.5?1:0;
+      boss.y+=(boss.targetY-boss.y)*0.02;boss.x+=(boss.moveTargetX-boss.x)*0.015;
+      boss.moveTargetX=W/2+Math.sin(boss.moveTimer*0.02)*140;
+      if(boss.phase===1)boss.y+=Math.sin(boss.moveTimer2*0.025)*1;
+      if(boss._timeZones)boss._timeZones=boss._timeZones.filter(z=>{z.life--;return z.life>0;});
+      boss.moveTimer++;boss.moveTimer2++;boss.specialTimer++;
+    },
+    draw(ctx,boss){
+      const phase2=boss.hp/boss.maxHp<0.5;
+      ctx.strokeStyle=phase2?'#8f8':'#6d6';ctx.lineWidth=3;
+      const r=35+Math.sin(boss.moveTimer*0.1)*3;
+      ctx.beginPath();ctx.arc(0,0,r,0,Math.PI*2);ctx.stroke();
+      for(let i=0;i<12;i++){const a=i*Math.PI*2/12+boss.moveTimer*0.015;ctx.beginPath();ctx.moveTo(Math.cos(a)*(r-8),Math.sin(a)*(r-8));ctx.lineTo(Math.cos(a)*(r+6),Math.sin(a)*(r+6));ctx.stroke();}
+      if(boss._timeZones)for(const z of boss._timeZones){const za=z.life/180;ctx.strokeStyle='rgba(0,255,0,'+(0.3*za)+')';ctx.lineWidth=2;ctx.setLineDash([4,4]);ctx.beginPath();ctx.arc(z.x-boss.x,z.y-boss.y,30,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);}
+      const cg=ctx.createRadialGradient(0,0,0,0,0,18);cg.addColorStop(0,'#fff');cg.addColorStop(0.4,'#8f8');cg.addColorStop(1,'#040');
+      ctx.fillStyle=cg;ctx.beginPath();ctx.arc(0,0,16,0,Math.PI*2);ctx.fill();
+      if(phase2){ctx.strokeStyle='rgba(255,68,68,0.5)';ctx.lineWidth=2;ctx.setLineDash([3,5]);ctx.beginPath();ctx.arc(0,0,r+10,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);}
+      ctx.fillStyle='#222';ctx.fillRect(-15,18,12,8);ctx.fillRect(3,18,12,8);
+    }
+  },
+  { // Lv7 - 湮灭之神: 终极3阶段 + 护卫无人机 + 屏幕填充弹幕
+    name:'湮灭之神', sub:'ANNIHILATION GOD', color:'#fff', hpMul:2.5, entranceType:'descend',
+    attack(boss){
+      const dm7=difficulty==="easy"?1.5:difficulty==="hard"?0.7:1.0;
+      const iv7=Math.max(3,Math.floor((boss.phase===2?4:(boss.phase===1?6:9))*dm7));
+      if(boss.shootTimer%iv7!==0)return;
+      if(boss.phase===0){
+        for(let i=-6;i<=6;i++){const a=i*0.12;enemyBullets.push(new EnemyBullet(boss.x,boss.y+20,Math.cos(a)*4*rank,Math.sin(a)*4*rank));}
+        const pa=Math.atan2(player.y-boss.y,player.x-boss.x);
+        for(let s of[-0.1,0,0.1])enemyBullets.push(new EnemyBullet(boss.x,boss.y+20,Math.cos(pa+s)*5*rank,Math.sin(pa+s)*5*rank,'#ff0',5));
+        if(boss.specialTimer%30===0){initAudio();sfxBossLaser();const sx=boss.x+Math.sin(boss.specialTimer*0.06)*100;for(let y=boss.y+25;y<H;y+=15)enemyBullets.push(new EnemyBullet(sx,y,0,3*rank,'#f44',3.5));}
+      }else if(boss.phase===1){
+        for(let i=0;i<16;i++){const a=i*Math.PI*2/16+boss.patternTimer*0.08;enemyBullets.push(new EnemyBullet(boss.x,boss.y+20,Math.cos(a)*3.5*rank,Math.sin(a)*3.5*rank));}
+        if(boss.specialTimer%30===0)for(let y=40;y<H;y+=25){enemyBullets.push(new EnemyBullet(0,y,2.5*rank,0,'#f4f',4));enemyBullets.push(new EnemyBullet(W,y,-2.5*rank,0,'#f4f',4));}
+        if(boss.specialTimer%50===0){const pa=Math.atan2(player.y-boss.y,player.x-boss.x);for(let j=-2;j<=2;j++)enemyBullets.push(new EnemyBullet(boss.x,boss.y+25,Math.cos(pa+j*0.15)*3*rank,Math.sin(pa+j*0.15)*3*rank,'#ff0',5));}
+      }else{
+        for(let i=0;i<28;i++){const a=i*Math.PI*2/28+boss.patternTimer*0.07;enemyBullets.push(new EnemyBullet(boss.x,boss.y+20,Math.cos(a)*3.5*rank,Math.sin(a)*3.5*rank));}
+        const pa=Math.atan2(player.y-boss.y,player.x-boss.x);
+        for(let s of[-0.1,0,0.1])enemyBullets.push(new EnemyBullet(boss.x,boss.y+20,Math.cos(pa+s)*6*rank,Math.sin(pa+s)*6*rank,'#fff',5.5));
+        if(boss.specialTimer%15===0)for(let i=-8;i<=8;i++)enemyBullets.push(new EnemyBullet(boss.x+i*9,boss.y+20,0,3.5*rank,'#f0f',4.5));
+        if(boss.specialTimer%25===0)for(let i=0;i<24;i++){const a=i*Math.PI*2/24;enemyBullets.push(new EnemyBullet(boss.x,boss.y,Math.cos(a)*3*rank,Math.sin(a)*3*rank,'#f44',4));}
+        if(boss.specialTimer%40===0)for(let x=15;x<W;x+=22)enemyBullets.push(new EnemyBullet(x,-10,0,2.5+Math.random()*2,'#ff0',5));
+        if(boss.specialTimer%10===0){shakeAmount=Math.min(9,shakeAmount+1);shakeDuration=Math.max(shakeDuration,8);}
+      }
+      if(boss.specialTimer%80===0&&enemies.filter(e=>e.isDrone).length<4){const e=new Enemy('scout',boss.x-35+Math.random()*70,boss.y+35,boss.level);e.color='#fff';e.w=16;e.h=16;e.hp=Math.ceil(4*rank);e.speed=0.8;e.score=80;e.canShoot=true;e.isGround=false;e.isDrone=true;enemies.push(e);}
+    },
+    update(boss){
+      const hpRatio=boss.hp/boss.maxHp;boss.phase=hpRatio<0.3?2:(hpRatio<0.6?1:0);
+      boss.y+=(boss.targetY-boss.y)*0.02;boss.x+=(boss.moveTargetX-boss.x)*0.012;
+      if(boss.moveTimer%150<75)boss.moveTargetX=W/2+(boss.phase===2?Math.sin(boss.moveTimer*0.045)*140:Math.sin(boss.moveTimer*0.03)*110);
+      if(boss.phase===2)boss.y+=Math.sin(boss.moveTimer2*0.04)*1.5;
+      if(boss.phase===2&&boss.specialTimer%20===0){shakeAmount=Math.min(6,shakeAmount+0.5);shakeDuration=Math.max(shakeDuration,5);}
+      boss.moveTimer++;boss.moveTimer2++;boss.specialTimer++;boss.ringAngle+=0.025;
+    },
+    draw(ctx,boss){
+      const p=boss.phase;
+      ctx.strokeStyle=p===2?'#fff':(p===1?'#f88':'#f0f');ctx.lineWidth=p===2?4:2;
+      ctx.beginPath();for(let i=0;i<40;i++){const a=boss.ringAngle+i*Math.PI*2/40;const r=48+Math.sin(i*3)*2;i===0?ctx.moveTo(Math.cos(a)*r,Math.sin(a)*r):ctx.lineTo(Math.cos(a)*r,Math.sin(a)*r);}ctx.closePath();ctx.stroke();
+      const bg=ctx.createRadialGradient(0,0,8,0,0,40);bg.addColorStop(0,p===2?'#fff':'#faf');bg.addColorStop(0.5,p===2?'#f44':'#a0a');bg.addColorStop(1,'#111');
+      ctx.fillStyle=bg;ctx.beginPath();ctx.arc(0,0,35,0,Math.PI*2);ctx.fill();ctx.strokeStyle=boss.color;ctx.stroke();
+      for(const s of[-1,1]){ctx.fillStyle=p===2?'#faa':'#888';ctx.beginPath();ctx.moveTo(s*15,-10);ctx.lineTo(s*55,-30);ctx.lineTo(s*50,-5);ctx.lineTo(s*20,8);ctx.closePath();ctx.fill();ctx.strokeStyle='#fff';ctx.lineWidth=1;ctx.stroke();}
+      const cg=ctx.createRadialGradient(0,0,0,0,0,16);cg.addColorStop(0,'#fff');cg.addColorStop(0.3,p===2?'#ff0':'#fff');cg.addColorStop(0.7,p===2?'#f44':'#f0f');cg.addColorStop(1,'#000');
+      ctx.fillStyle=cg;ctx.beginPath();ctx.arc(0,0,15,0,Math.PI*2);ctx.fill();
+      ctx.strokeStyle='rgba(255,255,255,0.6)';ctx.lineWidth=2;const pulse=15+Math.sin(frameCount*(p===2?0.3:0.15))*3;ctx.beginPath();ctx.arc(0,0,pulse,0,Math.PI*2);ctx.stroke();
+      for(let i=0;i<3;i++){ctx.fillStyle='#555';ctx.fillRect(-20+i*14,25,8,6);}
+    }
+  }
 ];
 
 // ==================== 敌人 ====================
@@ -1890,7 +1985,7 @@ class Enemy {
         this.isGround=false; this.entrancePhase=0;
         break;
       case 'boss':
-        this.def = BOSS_CONFIGS[Math.min(level-1, 4)];
+        this.def = BOSS_CONFIGS[Math.min(level-1, 6)];
         this.w=100; this.h=90;
         this.hp=Math.ceil((1200+level*450)*d.hpMul*this.def.hpMul);
         this.maxHp=this.hp; this.speed=0;
@@ -2011,6 +2106,37 @@ class Enemy {
           if (this.entranceTimer < 40) {
             shakeAmount = Math.max(shakeAmount, 2);
             shakeDuration = Math.max(shakeDuration, 4);
+          }
+        } else if (et === 'wormhole') {
+          // Lv6: 虫洞撕裂，绿色能量漩涡中显现
+          const swirlR = 10 + progress * 100;
+          if (this.entranceTimer % 2 === 0) {
+            const ra = Math.random() * Math.PI * 2;
+            const rr = swirlR * (0.4 + Math.random() * 0.6);
+            particles.push(new Particle(
+              this.targetX + Math.cos(ra) * rr, this.targetY + Math.sin(ra) * rr,
+              -Math.cos(ra) * (1 + Math.random() * 3), -Math.sin(ra) * (1 + Math.random() * 3),
+              18, '#8f8', 1.5 + Math.random() * 2));
+          }
+          this.y = this.targetY - swirlR + swirlR * progress * 2;
+          this.x = this.targetX;
+          if (this.entranceTimer < 35) {
+            shakeAmount = Math.max(shakeAmount, 3);
+            shakeDuration = Math.max(shakeDuration, 5);
+          }
+        } else if (et === 'descend') {
+          // Lv7: 天降神临，白色光柱 + 神圣粒子
+          this.y = -100 + (this.targetY + 100) * eased;
+          this.x = this.targetX;
+          if (this.entranceTimer % 3 === 0 && this.entranceTimer < 60) {
+            for (let i = 0; i < 4; i++) {
+              const lx = this.x + (Math.random() - 0.5) * 80;
+              particles.push(new Particle(lx, this.y + Math.random() * 30, (Math.random() - 0.5) * 1, -Math.random() * 3, 20, '#fff', 1.5 + Math.random() * 2));
+            }
+          }
+          if (this.entranceTimer < 50 && this.entranceTimer % 6 === 0) {
+            shakeAmount = Math.max(shakeAmount, 6 - this.entranceTimer * 0.08);
+            shakeDuration = Math.max(shakeDuration, 10);
           }
         } else {
           // Default fallback
@@ -2377,6 +2503,19 @@ class Enemy {
           ctx.fillStyle = '#fff'; ctx.shadowBlur = 0;
           ctx.beginPath(); ctx.arc(frag.x - this.x, frag.y - this.y, frag.size * 0.4, 0, Math.PI * 2); ctx.fill();
         }
+      }
+      if (this.entrancePhase === 0 && this.def.entranceType === 'wormhole') {
+        const swirlR = 10 + (this.entranceTimer / 80) * 100;
+        ctx.strokeStyle = 'rgba(136,255,136,0.4)'; ctx.lineWidth = 3;
+        ctx.setLineDash([6, 3]); ctx.beginPath(); ctx.arc(0, 0, swirlR, 0, Math.PI * 2); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      if (this.entrancePhase === 0 && this.def.entranceType === 'descend') {
+        const p = this.entranceTimer / 80;
+        const grad = ctx.createLinearGradient(0, -50, 0, 50); grad.addColorStop(0, 'rgba(255,255,255,' + (0.2 * (1 - p)) + ')'); grad.addColorStop(1, 'transparent');
+        ctx.fillStyle = grad; ctx.fillRect(-60, -50, 120, 100);
+        ctx.strokeStyle = 'rgba(255,255,255,' + (0.5 * (1 - p)) + ')'; ctx.lineWidth = 4;
+        ctx.beginPath(); ctx.moveTo(0, -40); ctx.lineTo(0, 40); ctx.stroke();
       }
       this.def.draw(ctx, this); }
       ctx.lineWidth = 3;
@@ -2811,7 +2950,7 @@ function levelComplete() {
   // 升级特效
   for (let i = 0; i < 100; i++) particles.push(new Particle(W / 2, H / 2, (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10, 45 + Math.random() * 35, ['#0ff', '#ff0', '#f0f', '#fff'][Math.floor(Math.random() * 4)], 2 + Math.random() * 5));
   // 关卡过渡动画
-  if (level > 5) { gameOver(true); }
+  if (level > 7) { gameOver(true); }
   else {
     transitionState = 1;
     transitionTimer = 0;
@@ -2856,11 +2995,14 @@ const STAGE_SCENES = [
   { nebulaHueBase: 20, nebulaHueRange: 40, nebulaAlphaMul: 1.2, starSpeedMul: 1.4, starColorBase: 2, bgR: 10, bgG: 2, bgB: 2 },
   { nebulaHueBase: 280, nebulaHueRange: 40, nebulaAlphaMul: 1.3, starSpeedMul: 1.6, starColorBase: 1, bgR: 4, bgG: 1, bgB: 14 },
   { nebulaHueBase: 40, nebulaHueRange: 30, nebulaAlphaMul: 1.4, starSpeedMul: 2.0, starColorBase: 3, bgR: 6, bgG: 6, bgB: 2 }
+,
+  { nebulaHueBase: 160, nebulaHueRange: 30, nebulaAlphaMul: 1.5, starSpeedMul: 1.8, starColorBase: 1, bgR: 2, bgG: 8, bgB: 10 },
+  { nebulaHueBase: 0, nebulaHueRange: 20, nebulaAlphaMul: 1.6, starSpeedMul: 2.2, starColorBase: 3, bgR: 8, bgG: 2, bgB: 4 }
 ];
 let currentScene = STAGE_SCENES[0];
 
 function getScene() {
-  const idx = Math.min(level - 1, 4);
+  const idx = Math.min(level - 1, 6);
   currentScene = STAGE_SCENES[idx];
   return currentScene;
 }
@@ -2871,11 +3013,14 @@ const STAGE_THEMES = [
   { name:'STRONGHOLD', cn:'要塞突破', sub:'敌方据点 · 火力全开', color:'#f80', color2:'#f44', bgColor:'#0a0202' },
   { name:'THE ABYSS', cn:'深渊之口', sub:'暗物质区 · 绝境求生', color:'#f0f', color2:'#80f', bgColor:'#050210' },
   { name:'FINAL BATTLE', cn:'最终决战', sub:'母舰核心 · 生死一搏', color:'#ff0', color2:'#fff', bgColor:'#080804' },
+,
+  { name:'TEMPORAL RIFT', cn:'时间裂隙', sub:'时空间隙 · 因果崩坏', color:'#8f8', color2:'#0f0', bgColor:'#010a0a' },
+  { name:'FINAL SANCTUM', cn:'终焉神殿', sub:'万物终点 · 最后一战', color:'#fff', color2:'#f44', bgColor:'#0a0204' }
 ];
 
 function drawStageTransition() {
   const t = transitionTimer;
-  const stage = Math.min(transitionStage, 5) - 1;
+  const stage = Math.min(transitionStage, 7) - 1;
   const theme = STAGE_THEMES[stage];
   const progress = Math.min(t / 150, 1);
 
