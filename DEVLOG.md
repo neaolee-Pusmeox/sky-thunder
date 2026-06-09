@@ -1,6 +1,44 @@
 # Sky Thunder (雷电风暴) — Dev Log
 
-> 最后更新: 2026-06-09 · v1.4.1 性能+炸弹修复版 · 文件: `Raiden/raiden-game.html` (~4450行, 纯 Canvas 2D + Web Audio API, 零依赖)
+> 最后更新: 2026-06-09 · v1.5 深度优化版 · 文件: `Raiden/raiden-game.html` (~4500行, 纯 Canvas 2D + Web Audio API, 零依赖)
+
+---
+
+## 📅 2026-06-09 深度优化 — v1.5 性能优化 + 武器系统模块化
+
+**深度性能优化（save/restore消除）+ WeaponManager重构**
+
+### ⚡ 深度性能优化（2项核心改进）
+
+#### #1 消除 Bullet/EnemyBullet 的 ctx.save()/ctx.restore()
+- **问题**: 每发子弹绘制时各自调用 save/restore，100+ 活跃子弹 = 200+ 次 save/restore 每帧
+- **修复**: 手动重置被修改的 ctx 属性（globalAlpha/lineCap/lineWidth），由 pool.draw() 提供单次外层 save/restore
+- **净效果**: 200+ save/restore → 4 次（每个对象池 1 次），显著降低 GPU 状态切换开销
+
+#### #2 pool.draw() 批量 save/restore
+- **问题**: 各实体 draw() 独立管理状态，累积大量状态切换
+- **修复**: 对象池 draw() 包裹整批绘制在 ctx.save()/ctx.restore() 中，内部实体无需各自保存状态
+- **适用范围**: particlePool / bulletPool / enemyBulletPool / hudParticlePool
+
+### 🔧 武器系统模块化 (WeaponManager)
+- **提取**: 新建 `WeaponManager` 类，封装武器状态和逻辑
+  - `current` / `level` — 当前武器索引和等级
+  - `cycle(px, py)` — 切换武器（接收玩家坐标参数，不依赖全局 player）
+  - `upgrade()` — 升级武器等级
+  - `getCooldown(rapidFire)` — 计算射击冷却（接收 rapidFire 布尔值）
+  - `getName()` / `getColor()` / `getIcon()` — UI 访问器
+- **解耦**: 消除 Player.shoot() 对全局 weaponLevel/currentWeapon 的依赖
+- **清理**: 删除旧的 weaponLevel / currentWeapon / weaponNotifyTimer / weaponNotifyWeapon 全局变量
+- **迁移**: 22 处 weaponLevel 引用 → weaponMgr.level，HUD 渲染使用 weaponMgr 访问器
+
+### 🧹 代码清理
+- 删除未完成的离屏 Canvas 背景缓存死代码（bgCanvas/bgCtx/bgDirty 等）
+
+### 技术教训
+- ctx.save()/ctx.restore() 是 Canvas 2D 最昂贵的操作之一，每帧数百次调用显著拖慢帧率
+- 全局状态变量应封装到专用管理类中，避免散落在多个位置的直接引用
+- 模块间应通过参数传递而非全局变量通信（如 WeaponManager.cycle(px,py) 而非直接读 player.x）
+- 正则全局替换 (`/foo/g`) 需谨慎，可能意外修改字符串字面量和声明语句
 
 ---
 
@@ -837,6 +875,8 @@ if ((keys['k']||keys['x']) && bombs>0) { useBomb(); bombs--; keys['k']=false; ke
 | 105 | ObjectPool.update() splice O(n²) 性能瓶颈 | 高 | ✅ 已修复 |
 | 106 | enemies.filter() 每帧创建新数组 GC压力 | 高 | ✅ 已修复 |
 | 107 | pool.draw() 无离屏裁剪 | 低 | ✅ 已修复 |
+| 108 | Bullet/EnemyBullet draw() 各自 ctx.save/restore → 性能瓶颈 | 高 | ✅ 已修复 |
+| 109 | 武器全局变量 weaponLevel/currentWeapon 散落各处 | 中 | ✅ 已修复 |
 
 ---
 

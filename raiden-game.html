@@ -1111,7 +1111,7 @@ function setSfxVolume(vol) {
 
 // ==================== 游戏变量 ====================
 let player, enemies, powerUps, stars, nebulae;
-let score, combo, maxCombo, lives, bombs, weaponLevel, currentWeapon;
+let score, combo, maxCombo, lives, bombs;
 let level, wave, waveEnemiesRemaining;
 let frameCount, shakeAmount, shakeDuration, shakeX=0, shakeY=0;
 let bossActive, killedCount;
@@ -1129,8 +1129,7 @@ let comboPopupText = '';
 let floatTexts = [];
 let hudParticles = [];
 let sfxVolume = 1.0;
-let weaponNotifyTimer = 0;
-let weaponNotifyWeapon = 0;
+// weaponMgr.notifyTimer/notifyWeapon 由 WeaponManager 构造函数初始化
 let highScore = 0;
 let bossWarningTimer = 0;
 let pendingBossName = '';
@@ -1434,6 +1433,55 @@ class Particle {
   }
 }
 
+// ==================== 武器管理系统 ====================
+class WeaponManager {
+  constructor() {
+    this.current = 0;       // 当前武器索引
+    this.level = 1;         // 武器等级 1-6
+    this.notifyTimer = 0;   // 切换提示计时器
+    this.notifyWeapon = 0;
+  }
+
+  reset() {
+    this.current = 0;
+    this.level = 1;
+    this.notifyTimer = 0;
+  }
+
+  cycle(px, py) {
+    this.current = (this.current + 1) % 5;
+    this.notifyTimer = 90;
+    this.notifyWeapon = this.current;
+    initAudio(); sfxWeaponSwitch();
+    for (let i = 0; i < 12; i++) {
+      spawnParticle(px, py - 20,
+        (Math.random() - 0.5) * 6, (Math.random() - 0.5) * 6,
+        20, WEAPON_COLORS[this.current], 2 + Math.random() * 3);
+    }
+  }
+
+  upgrade() {
+    this.level = Math.min(this.level + 1, 6);
+  }
+
+  getCooldown(rapidFire) {
+    if (rapidFire) return 1;
+    switch (this.current) {
+      case 2: return 2;
+      case 3: return 22;
+      case 4: return 2;
+      default: return 5;
+    }
+  }
+
+  getName() { return WEAPON_NAMES[this.current]; }
+  getColor() { return WEAPON_COLORS[this.current]; }
+  getIcon() { return WEAPON_ICONS[this.current]; }
+}
+
+// 全局武器管理器实例
+const weaponMgr = new WeaponManager();
+
 // ==================== 玩家飞机 — 科幻战斗机 ====================
 class Player {
   constructor() {
@@ -1474,7 +1522,7 @@ class Player {
 
     if ((keys['j']||keys['z']) && this.shootCooldown<=0) {
       this.shoot();
-      this.shootCooldown = this.buffs.rapidFire>0 ? 1 : (currentWeapon===2 ? 2 : currentWeapon===3 ? 22 : currentWeapon===4 ? 2 : 5);
+      this.shootCooldown = weaponMgr.getCooldown(this.buffs.rapidFire>0);
       this.heatLevel = Math.min(1.0, this.heatLevel + 0.06);
     } else {
       this.heatLevel = Math.max(0, this.heatLevel - 0.02);
@@ -1488,7 +1536,7 @@ class Player {
     const cx=this.x, cy=this.y-this.h/2+4;
     const dmgMul = this.buffs.doubleDamage > 0 ? 2 : 1;
     const s = diffCfg.bulletSpeed;
-    switch(currentWeapon) {
+    switch(weaponMgr.current) {
       case 0: this._shootTwin(cx,cy,dmgMul,s); break;
       case 1: this._shootSpread(cx,cy,dmgMul,s); break;
       case 2: this._shootLaser(cx,cy,dmgMul,s); break;
@@ -1500,33 +1548,33 @@ class Player {
   _shootTwin(cx,cy,dmgMul,s) {
     addBullet(cx-6,cy,0,-11*s,'#0ff',1,2*dmgMul,10);
     addBullet(cx+6,cy,0,-11*s,'#0ff',1,2*dmgMul,10);
-    if(weaponLevel>=3){addBullet(cx-12,cy,0,-11*s,'#0ee',1,1.5*dmgMul,9);addBullet(cx+12,cy,0,-11*s,'#0ee',1,1.5*dmgMul,9);}
-    if(weaponLevel>=5){addBullet(cx,cy,-0.4,-11*s,'#0dd',1,1.5*dmgMul,9);addBullet(cx,cy,0.4,-11*s,'#0dd',1,1.5*dmgMul,9);}
-    if(weaponLevel>=6){for(let i=-3;i<=3;i++){const a=i*5*Math.PI/180;addBullet(cx+i*4,cy,Math.sin(a)*1.5,-11*Math.cos(a)*s,'#0ff',1.2,1.8*dmgMul,10);}}
+    if(weaponMgr.level>=3){addBullet(cx-12,cy,0,-11*s,'#0ee',1,1.5*dmgMul,9);addBullet(cx+12,cy,0,-11*s,'#0ee',1,1.5*dmgMul,9);}
+    if(weaponMgr.level>=5){addBullet(cx,cy,-0.4,-11*s,'#0dd',1,1.5*dmgMul,9);addBullet(cx,cy,0.4,-11*s,'#0dd',1,1.5*dmgMul,9);}
+    if(weaponMgr.level>=6){for(let i=-3;i<=3;i++){const a=i*5*Math.PI/180;addBullet(cx+i*4,cy,Math.sin(a)*1.5,-11*Math.cos(a)*s,'#0ff',1.2,1.8*dmgMul,10);}}
   }
   _shootSpread(cx,cy,dmgMul,s) {
-    const angles=weaponLevel>=4?[-22,-11,0,11,22]:[-15,0,15];
+    const angles=weaponMgr.level>=4?[-22,-11,0,11,22]:[-15,0,15];
     angles.forEach(a=>{const r=a*Math.PI/180;addBullet(cx,cy,Math.sin(r)*2,-11*Math.cos(r)*s,'#ff0',1,1.5*dmgMul,7);});
-    if(weaponLevel>=5)angles.forEach(a=>{const r=a*Math.PI/180;addBullet(cx,cy,Math.sin(r)*3,-9*Math.cos(r)*s,'#fa0',.8,1.2*dmgMul,6);});
-    if(weaponLevel>=6){const sb=frameCount*.15;for(let i=0;i<6;i++){const a=sb+i*Math.PI*2/6;addBullet(cx,cy,Math.cos(a)*1.5,Math.sin(a)*-8*s,'#ff0',1,1.5*dmgMul,8);}}
+    if(weaponMgr.level>=5)angles.forEach(a=>{const r=a*Math.PI/180;addBullet(cx,cy,Math.sin(r)*3,-9*Math.cos(r)*s,'#fa0',.8,1.2*dmgMul,6);});
+    if(weaponMgr.level>=6){const sb=frameCount*.15;for(let i=0;i<6;i++){const a=sb+i*Math.PI*2/6;addBullet(cx,cy,Math.cos(a)*1.5,Math.sin(a)*-8*s,'#ff0',1,1.5*dmgMul,8);}}
   }
   _shootLaser(cx,cy,dmgMul,s) {
     addBullet(cx,cy,0,-15*s,'#f0f',3,2.5*dmgMul,22);
-    if(weaponLevel>=3){addBullet(cx-7,cy,0,-15*s,'#f0f',2,2*dmgMul,20);addBullet(cx+7,cy,0,-15*s,'#f0f',2,2*dmgMul,20);}
-    if(weaponLevel>=6){const b1=addBullet(cx,cy,0,-16*s,'#faf',5,3*dmgMul,35);const b2=addBullet(cx-12,cy,0,-16*s,'#f8f',3,2*dmgMul,30);const b3=addBullet(cx+12,cy,0,-16*s,'#f8f',3,2*dmgMul,30);if(b1)b1.penetrate=!0;if(b2)b2.penetrate=!0;if(b3)b3.penetrate=!0;}
+    if(weaponMgr.level>=3){addBullet(cx-7,cy,0,-15*s,'#f0f',2,2*dmgMul,20);addBullet(cx+7,cy,0,-15*s,'#f0f',2,2*dmgMul,20);}
+    if(weaponMgr.level>=6){const b1=addBullet(cx,cy,0,-16*s,'#faf',5,3*dmgMul,35);const b2=addBullet(cx-12,cy,0,-16*s,'#f8f',3,2*dmgMul,30);const b3=addBullet(cx+12,cy,0,-16*s,'#f8f',3,2*dmgMul,30);if(b1)b1.penetrate=!0;if(b2)b2.penetrate=!0;if(b3)b3.penetrate=!0;}
   }
   _shootMissile(cx,cy,dmgMul,s) {
     addBullet(cx-8,cy,-1.8,-6*s,'#f80',5,4.5*dmgMul,0,!0);
     addBullet(cx+8,cy,1.8,-6*s,'#f80',5,4.5*dmgMul,0,!0);
-    if(weaponLevel>=4)addBullet(cx,cy,0,-7*s,'#f60',5,4*dmgMul,0,!0);
-    if(weaponLevel>=6){const b=addBullet(cx,cy,0,-8*s,'#f40',8,5*dmgMul,0,!0);if(b){b.cluster=!0;b.clusterCount=8;}}
+    if(weaponMgr.level>=4)addBullet(cx,cy,0,-7*s,'#f60',5,4*dmgMul,0,!0);
+    if(weaponMgr.level>=6){const b=addBullet(cx,cy,0,-8*s,'#f40',8,5*dmgMul,0,!0);if(b){b.cluster=!0;b.clusterCount=8;}}
   }
   _shootLightning(cx,cy,dmgMul,s) {
     const stWpn=b=>{if(b)b.weapon=4;return b;};
     stWpn(addBullet(cx,cy,0,-20*s,'#ffa',2*dmgMul,1.8,28));
-    if(weaponLevel>=3){stWpn(addBullet(cx-5,cy,0,-20*s,'#ffe',1.5*dmgMul,1.5,24));stWpn(addBullet(cx+5,cy,0,-20*s,'#ffe',1.5*dmgMul,1.5,24));}
-    if(weaponLevel>=5){stWpn(addBullet(cx-10,cy,0,-20*s,'#ffd',1.2*dmgMul,1.3,22));stWpn(addBullet(cx+10,cy,0,-20*s,'#ffd',1.2*dmgMul,1.3,22));}
-    if(weaponLevel>=6){stWpn(addBullet(cx-4,cy,-1.5,-18*s,'#fff',1.8*dmgMul,1.6,26));stWpn(addBullet(cx+4,cy,1.5,-18*s,'#fff',1.8*dmgMul,1.6,26));}
+    if(weaponMgr.level>=3){stWpn(addBullet(cx-5,cy,0,-20*s,'#ffe',1.5*dmgMul,1.5,24));stWpn(addBullet(cx+5,cy,0,-20*s,'#ffe',1.5*dmgMul,1.5,24));}
+    if(weaponMgr.level>=5){stWpn(addBullet(cx-10,cy,0,-20*s,'#ffd',1.2*dmgMul,1.3,22));stWpn(addBullet(cx+10,cy,0,-20*s,'#ffd',1.2*dmgMul,1.3,22));}
+    if(weaponMgr.level>=6){stWpn(addBullet(cx-4,cy,-1.5,-18*s,'#fff',1.8*dmgMul,1.6,26));stWpn(addBullet(cx+4,cy,1.5,-18*s,'#fff',1.8*dmgMul,1.6,26));}
   }
 
   draw(ctx) {
@@ -1739,13 +1787,12 @@ class Bullet {
     return this.y>-20 && this.y<H+20 && this.x>-20 && this.x<W+20;
   }
   draw(ctx) {
-    ctx.save();
+    // 无save/restore：绘制子弹（仅改变全局状态，由对象池draw()恢复）
     // 外层光晕
-    ctx.fillStyle = this.color.replace(')','').replace('rgb','rgba').replace('#','');
     const alpha = this.color.startsWith('#') ? 0.25 : 0.3;
     ctx.globalAlpha = alpha;
+    ctx.fillStyle = this.color;
     ctx.beginPath(); ctx.arc(this.x, this.y, this.size*2.5, 0, Math.PI*2); ctx.fill();
-    ctx.globalAlpha = 1;
 
     // 拖尾
     if (this.length>0) {
@@ -1758,14 +1805,16 @@ class Bullet {
       ctx.beginPath(); ctx.moveTo(this.x, this.y);
       ctx.lineTo(this.x-this.vx*this.length*0.12, this.y-this.vy*this.length*0.12);
       ctx.stroke();
+      ctx.lineCap = 'butt';
+      ctx.lineWidth = 1;
     }
     // 核心白点
+    ctx.globalAlpha = 1;
     ctx.fillStyle = '#fff';
     ctx.beginPath(); ctx.arc(this.x, this.y, this.size*0.5, 0, Math.PI*2); ctx.fill();
     // 子弹颜色
     ctx.fillStyle = this.color;
     ctx.beginPath(); ctx.arc(this.x, this.y, this.size, 0, Math.PI*2); ctx.fill();
-    ctx.restore();
   }
   hitbox() { return { x:this.x-this.size*2.5, y:this.y-this.size*2.5, w:this.size*5, h:this.size*5 }; }
 }
@@ -1782,8 +1831,8 @@ class EnemyBullet {
     return this.y<H+20 && this.y>-20 && this.x>-20 && this.x<W+20;
   }
   draw(ctx) {
-    ctx.save();
-    // 外层光晕（更亮更大）
+    // 无save/restore：仅改globalAlpha/lineCap需后置恢复
+    // 外层光晕
     ctx.globalAlpha = 0.5;
     ctx.fillStyle = this.color;
     ctx.beginPath(); ctx.arc(this.x, this.y, this.size*2.5, 0, Math.PI*2); ctx.fill();
@@ -1806,7 +1855,9 @@ class EnemyBullet {
     ctx.beginPath(); ctx.moveTo(this.prevX, this.prevY);
     ctx.lineTo(this.x, this.y);
     ctx.stroke();
-    ctx.restore();
+    ctx.lineCap = 'butt';
+    ctx.lineWidth = 1;
+    ctx.globalAlpha = 1;
   }
   hitbox() { return { x:this.x-this.size, y:this.y-this.size, w:this.size*2, h:this.size*2 }; }
 }
@@ -1864,14 +1915,16 @@ class ObjectPool {
   }
   // 替代 for(...of arr) arr.draw(ctx)
   draw(ctx) {
+    // 单次save/restore保护整批绘制，避免每个实体各自save/restore
+    ctx.save();
     for (let i = 0; i < this.active.length; i++) {
       const obj = this.active[i];
       if (obj.alive) {
-        // 视锥裁剪：跳过屏幕外的粒子
         if (obj.x < -20 || obj.x > W+20 || obj.y < -20 || obj.y > H+20) continue;
         obj.draw(ctx);
       }
     }
+    ctx.restore();
   }
   clear() {
     // 批量释放所有 active
@@ -3370,9 +3423,9 @@ function useBomb() {
 
 function cycleWeapon() {
   initAudio(); sfxWeaponSwitch();
-  currentWeapon=(currentWeapon+1)%5;
-  weaponNotifyTimer = 50;
-  weaponNotifyWeapon = currentWeapon;
+  weaponMgr.cycle(player.x,player.y); initAudio(); sfxWeaponSwitch(); for(let i=0;i<6;i++) spawnParticle(player.x,player.y-20,0,-4,18,"#fff",2.5);
+  weaponMgr.notifyTimer = 50;
+  weaponMgr.notifyWeapon = weaponMgr.current;
   for (let i=0; i<6; i++) spawnParticle(player.x, player.y-20, 0, -4, 18, '#fff', 2.5);
 }
 
@@ -3691,13 +3744,13 @@ function initGame() {
   score=0; combo=0; maxCombo=0;
   lives=diffCfg.startLives;
   bombs=diffCfg.startBombs;
-  weaponLevel=1; currentWeapon=0;
+  weaponMgr.reset();
   level=1; wave=0;
   getScene();
   waveEnemiesRemaining=0;
   frameCount=0; shakeAmount=0; shakeDuration=0;
   bossActive=false; killedCount=0; comboResetTimer=0; comboBarTimer=0; comboMultiplier=1.0; comboMilestoneTimer=0; comboMilestoneLevel=0;
-  comboPopupTimer=0; weaponNotifyTimer=0;
+  comboPopupTimer=0; weaponMgr.notifyTimer=0;
   rank = 1.0;
   bossWarningTimer=0; waveAnnounceTimer=0; waveAnnounceText=''; waveAnnounceParticles=[]; bombFlashTimer=0; stageClearTimer=0; autoBombUsed=false;
   spawnWave();
@@ -3855,7 +3908,7 @@ function gameLoop() {
             }
             // === Lightning Beam chain ===
             if (bullet.weapon === 4 && enemy.alive === false) {
-              const maxHops = weaponLevel >= 6 ? 6 : weaponLevel >= 5 ? 4 : weaponLevel >= 3 ? 3 : 2;
+              const maxHops = weaponMgr.level >= 6 ? 6 : weaponMgr.level >= 5 ? 4 : weaponMgr.level >= 3 ? 3 : 2;
               let currEnemy = enemy;
               let chainDmg = bullet.dmg * 0.7;
               const chained = new Set();
@@ -4051,18 +4104,18 @@ function gameLoop() {
   ctx.restore();
 
   // === 武器切换通知 ===
-  if (weaponNotifyTimer > 0) {
-    weaponNotifyTimer--;
-    const wnAlpha = weaponNotifyTimer > 35 ? 1 : weaponNotifyTimer / 35;
-    const wnY = H/2 - 10 - (50 - weaponNotifyTimer) * 0.6;
+  if (weaponMgr.notifyTimer > 0) {
+    weaponMgr.notifyTimer--;
+    const wnAlpha = weaponMgr.notifyTimer > 35 ? 1 : weaponMgr.notifyTimer / 35;
+    const wnY = H/2 - 10 - (50 - weaponMgr.notifyTimer) * 0.6;
     ctx.save();
     ctx.globalAlpha = wnAlpha;
     ctx.textAlign = 'center';
-    ctx.fillStyle = WEAPON_COLORS[weaponNotifyWeapon];
+    ctx.fillStyle = WEAPON_COLORS[weaponMgr.notifyWeapon];
     ctx.font = 'bold 28px "Orbitron","Courier New",monospace';
-    ctx.shadowColor = WEAPON_COLORS[weaponNotifyWeapon];
+    ctx.shadowColor = WEAPON_COLORS[weaponMgr.notifyWeapon];
     ctx.shadowBlur = 18;
-    ctx.fillText(`${WEAPON_ICONS[weaponNotifyWeapon]} ${WEAPON_NAMES[weaponNotifyWeapon]}`, W/2, wnY);
+    ctx.fillText(`${WEAPON_ICONS[weaponMgr.notifyWeapon]} ${WEAPON_NAMES[weaponMgr.notifyWeapon]}`, W/2, wnY);
     ctx.shadowBlur = 0;
     ctx.restore();
   }
@@ -4099,7 +4152,7 @@ function applyPowerUp(pu) {
   initAudio(); sfxPowerUp();
   switch(pu.type) {
     case 'weapon':
-      weaponLevel=Math.min(weaponLevel+1,6);
+      weaponMgr.level=Math.min(weaponMgr.level+1,6);
       rank = Math.min(MAX_RANK, rank + 0.04); // 吃道具提升Rank
       for (let i=0; i<12; i++) spawnParticle(pu.x, pu.y, (Math.random()-0.5)*4, -Math.random()*5, 18, '#ff0', 2.5);
       break;
@@ -4406,18 +4459,18 @@ function drawHUD() {
 
   // 武器
   ctx.textAlign='center';
-  ctx.fillStyle=WEAPON_COLORS[currentWeapon];
+  ctx.fillStyle=weaponMgr.getColor();
   ctx.font='bold 12px "Orbitron","Courier New",monospace';
-  ctx.fillText(`⚡ ${WEAPON_NAMES[currentWeapon]}`, W/2, bBarY+18);
+  ctx.fillText(`⚡ ${weaponMgr.getName()}`, W/2, bBarY+18);
   // 武器等级条
   const lvBarW=80, lvBarH=5;
   ctx.fillStyle='rgba(255,255,255,0.15)';
   ctx.fillRect(W/2-lvBarW/2, bBarY+26, lvBarW, lvBarH);
-  ctx.fillStyle=WEAPON_COLORS[currentWeapon];
-  ctx.fillRect(W/2-lvBarW/2, bBarY+26, lvBarW*(weaponLevel/6), lvBarH);
+  ctx.fillStyle=weaponMgr.getColor();
+  ctx.fillRect(W/2-lvBarW/2, bBarY+26, lvBarW*(weaponMgr.level/6), lvBarH);
   ctx.fillStyle='#fff';
   ctx.font='9px "Orbitron","Courier New",monospace';
-  ctx.fillText(`Lv.${weaponLevel}`, W/2, bBarY+40);
+  ctx.fillText(`Lv.${weaponMgr.level}`, W/2, bBarY+40);
 
   // === 激活Buff显示（彩色进度条） ===
   if (player.buffs.doubleDamage>0 || player.buffs.freezeAll>0 || player.buffs.rapidFire>0 || player.buffs.magnet>0 || player.buffs.score2x>0) {
