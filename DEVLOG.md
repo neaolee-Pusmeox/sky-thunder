@@ -1,6 +1,73 @@
 # Sky Thunder (雷电风暴) — Dev Log
 
-> 最后更新: 2025-06-08 · v1.2 内容扩展版 · 文件: `Raiden/raiden-game.html` (~4300行, 纯 Canvas 2D + Web Audio API, 零依赖)
+> 最后更新: 2026-06-09 · v1.4 关卡衔接修复版 · 文件: `Raiden/raiden-game.html` (~4450行, 纯 Canvas 2D + Web Audio API, 零依赖)
+
+---
+
+## 📅 2026-06-09 热修复 — v1.4 关卡衔接修复 + 暂停页重设计
+
+**修复致命BUG：第5关Boss击杀后游戏卡死 + Stage 5显示为'最后一关'**
+
+### 🐛 致命BUG #98: Stage 5 Boss击杀后游戏完全卡死
+- **现象**: 第5关杀死Boss后页面完全卡死，可进暂停但退出后游戏依然卡死
+- **根因**: `STAGE_THEMES` 数组第4个元素 `FINAL BATTLE` 后存在尾随逗号 `,`，创建了空槽位 index 5 = `undefined`
+  - Stage 5 通关后 `levelComplete()` 将 `transitionStage` 设为 6
+  - `drawStageTransition()` 中 `stage = Math.min(6, 7) - 1 = 5`
+  - `theme = STAGE_THEMES[5]` = `undefined` → `ctx.fillStyle = theme.bgColor` 抛 TypeError → 游戏循环崩溃
+- **影响范围**: 100% 可复现，非偶发 bug，Stage 5 Boss 被击败后必定触发
+- **修复**: 删除尾随逗号，重排 7 个 stage theme 使索引一一对应
+
+### 🐛 Bug #99: Stage 5 过渡文字显示为'最后一关'
+- **根因**: Stage 5 theme 名为 `FINAL BATTLE / 最终决战`，未考虑新增的第6第7关
+- **修复**: 重命名 Stage 5 为 `CORE FORTRESS / 核心要塞`（与Boss名一致），Stage 7 保留 `FINAL SANCTUM / 终焉神殿` 作为真正最终关
+
+### 🎨 暂停页面重新设计
+- **问题**: 原暂停页元素被挤在页面中央靠右位置，不规则且难看
+- **新设计**: 暗色半透明容器 `.pause-box` + 居中对齐 + 入场淡入缩放动画
+  - 暂停图标脉冲动画、标题/副标题层次分明、分隔线装饰
+  - 音量滑块重新布局（横向排列）、按钮独立样式类
+  - 底部按键提示、hover/active 状态过渡
+- **CSS**: 新增 100+ 行暂停页面专属样式
+
+### 🔧 其他修复
+- **过渡动画扩展**: `drawStageTransition()` 的 `else` 块拆分为 Stage 5→6（金色→翡翠绿渐变）、Stage 6→7（翡翠→白辉渐变）、Stage 7 三个独立动画
+- **Player.shoot() 重构**: 5种武器的发射逻辑提取为独立方法 `_shootTwin/_shootSpread/_shootLaser/_shootMissile/_shootLightning`，主 `shoot()` 缩减为简洁 switch 分发
+- **项目清理**: 删除临时修复脚本 `fix_all.js`
+
+### 技术教训
+- JavaScript 数组中尾随逗号 `[a, b,]` 不创建空槽位，但 `[a, b,, c]` 会 → 数组索引偏移是静默的，访问 `undefined` 才暴露
+- 单文件 HTML 用 Node.js 脚本做字符串替换比 `str_replace` 工具更可靠（换行符匹配问题）
+- 暂停页面应使用独立 CSS 类而非内联样式，便于维护和动画
+
+---
+
+## 📅 2026-06-09 热修复 — v1.3 稳定性修复
+
+**修复致命BUG：被击中后机体永久消失 + 对象池引用加固**
+
+### 🐛 致命BUG #1: 机体被击中后消失不复活
+- **现象**: 进入游戏后机体触雷或被击中会爆炸消失，有多条命但机体不见，关卡正常继续
+- **根因**: 游戏主循环中缺少 `player.update()` 调用。`playerHit()` 将 `player.invincible` 设为 100，但无代码递减该计时器 → 闪爍效果永久持续 → 机体不可见
+- **连锁影响**: 玩家也无法移动（按键输入未处理）和射击（`shoot()` 未调用）
+- **修复**: 在 `gameLoop()` 的 `updateTouchControlsVisibility()` 之后、`bulletPool.update()` 之前添加 `player.update();`
+
+### 🛡️ 对象池引用加固 (#2)
+- **问题**: `Player.shoot()` 中使用 `bulletPool.active[bulletPool.active.length-1]` 模式设置子弹特殊属性（`weapon`/`penetrate`/`cluster`），若对象池满导致 `acquire()` 返回 null，该引用指向错误的子弹
+- **修复方案**: 改为捕获 `addBullet()` 返回值 + null 检查
+  - 激光 Lv6: 3发穿透弹 → `_bl1`/`_bl2`/`_bl3` 带 `if` 守卫
+  - 导弹 Lv6: 子母弹 → `_mb` 带 `if` 守卫
+  - 雷电光束 全等级: 8处 `weapon=4` 标记 → `_lb0`~`_lb6` 带 `if` 守卫
+- **受影响范围**: `Player.shoot()` 中 case 2/3/4 三个武器分支，共 12 处引用全部加固
+
+### 🔧 项目清理
+- 删除 12 个临时修复脚本（`add_touch.js` / `fix_bugs.js` / `fix_extra_parens.js` / `fix_pool_class.js` / `refactor_pool.js` / `fix_pool_integration.js` / `fix_remaining_pool.js` / `fix_pool_new.js` / `cleanup_dead_vars.js` / `final_fixes.js` / `fix_debris.js` / `harden_pool_refs.js`）
+- 端到端浏览器测试通过：菜单→选难度→游戏→被击中→复活→切换武器，全部正常
+- 无 JavaScript 控制台错误
+
+### 技术教训
+- 对象池集成时容易遗漏 `player.update()` 等核心调用，需端到端测试验证
+- `bulletPool.active[active.length-1]` 是脆弱的反模式，应始终使用 `acquire()` 返回值
+- 大型 HTML 文件用 str_replace 匹配精确换行符不可靠，Node.js 脚本更稳妥
 
 ---
 
@@ -712,6 +779,21 @@ if ((keys['k']||keys['x']) && bombs>0) { useBomb(); bombs--; keys['k']=false; ke
 | 85 | HUD作弊指示器 | 低 | ✅ 已修复 |
 | 86 | 重开时作弊状态未重置 | 中 | ✅ 已修复 |
 | 87 | 作弊视觉光环 | 低 | ✅ 已修复 |
+| 88 | addEnemyBullet 无限递归导致游戏黑屏卡死 | 致命 | ✅ 已修复 |
+| 89 | ObjectPool 缺少 new 关键字导致类构造失败 | 致命 | ✅ 已修复 |
+| 90 | 渲染层仍用旧数组遍历，对象池更新未生效 | 高 | ✅ 已修复 |
+| 91 | 碰撞检测遍历旧数组而非 pool.active | 高 | ✅ 已修复 |
+| 92 | useBomb/startGame 直接清空数组而非 pool.clear() | 高 | ✅ 已修复 |
+| 93 | 碎片粒子绕过对象池直接 push | 中 | ✅ 已修复 |
+| 94 | startGame() 缺少 BGM 初始化 | 中 | ✅ 已修复 |
+| 95 | 清理无用全局变量 bullets/enemyBullets/particles/hudParticles | 低 | ✅ 已修复 |
+| 96 | 游戏主循环缺少 player.update() → 机体被击后永久消失 | 致命 | ✅ 已修复 |
+| 97 | bulletPool.active[N] 脆引用 → 对象池满时指向错误子弹 | 中 | ✅ 已修复 |
+| 98 | STAGE_THEMES 尾随逗号创建空槽位 → Stage 5 Boss击杀后游戏卡死 | 致命 | ✅ 已修复 |
+| 99 | Stage 5 过渡文字显示为'最终决战' → 未考虑第6/7关 | 中 | ✅ 已修复 |
+| 100 | 暂停页面 UI 丑陋、元素偏右 | 低 | ✅ 已修复 |
+| 101 | Player.shoot() 过长 (~80行) → 重构为5个独立武器方法 | 低 | ✅ 已修复 |
+| 102 | drawStageTransition else块统一处理 Stage 5-7 过渡 | 中 | ✅ 已修复 |
 
 ---
 
@@ -764,6 +846,8 @@ if ((keys['k']||keys['x']) && bombs>0) { useBomb(); bombs--; keys['k']=false; ke
 9. **委托模式**: Boss 的 `attack/update/draw` 通过 `this.def.xxx(this)` 委托，保持核心类干净。
 10. **hudParticles 独立系统**: HUD 血条粒子使用独立数组，不混入游戏世界 particles，避免碰撞检测等逻辑干扰。
 11. **新敌人入口动画**: sniper 使用 `entrancePhase` (0→1) 实现从屏幕侧边滑入的入场动画，splitter/shielded/sniper 均使用 `spawnOffsetX/Y` 从屏幕外进入。
+12. **对象池 acquire() 返回值**: 始终使用 `acquire()` 的返回值并做 null 检查，避免 `pool.active[pool.active.length-1]` 脆引用模式。
+13. **player.update() 至关重要**: 游戏主循环中必须调用玩家 update，否则 invincible 计时器不递减、输入不处理、射击不触发。
 
 ---
 
