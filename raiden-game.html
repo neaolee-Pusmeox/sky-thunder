@@ -1028,7 +1028,6 @@ if (bombBtnEl) {
     if (gameState !== STATE.PLAYING || bombs <= 0) return;
     bombBtnEl.classList.add("pressed");
     useBomb();
-    if (!godMode) bombs--; else bombs = 5;
     const bc = document.getElementById("bombCount");
     if (bc) bc.textContent = bombs;
     if (navigator.vibrate) navigator.vibrate(30);
@@ -1037,7 +1036,6 @@ if (bombBtnEl) {
   bombBtnEl.addEventListener("click", e => {
     if (gameState !== STATE.PLAYING || bombs <= 0) return;
     useBomb();
-    if (!godMode) bombs--; else bombs = 5;
     const bc = document.getElementById("bombCount");
     if (bc) bc.textContent = bombs;
   });
@@ -1481,7 +1479,7 @@ class Player {
     } else {
       this.heatLevel = Math.max(0, this.heatLevel - 0.02);
     }
-    if ((keys['k']||keys['x']) && bombs>0) { useBomb(); if (!godMode) bombs--; else bombs=5; keys['k']=false; keys['x']=false; }
+    if ((keys['k']||keys['x']) && bombs>0) { useBomb(); keys['k']=false; keys['x']=false; }
     if (keys['m']) { keys['m']=false; cycleWeapon(); }
   }
 
@@ -1849,13 +1847,17 @@ class ObjectPool {
     if (idx >= 0) this.active.splice(idx, 1);
     this.free.push(obj);
   }
-  // 替代 arr.filter(o => o.update())：原地更新+回收死亡对象，无新数组分配
+  // 原地更新+回收死亡对象（swap-and-pop 替代 splice，O(1) vs O(n)）
   update() {
     for (let i = this.active.length - 1; i >= 0; i--) {
       const obj = this.active[i];
       if (!obj.alive || !obj.update()) {
         obj.alive = false;
-        this.active.splice(i, 1);
+        // swap-and-pop: 用最后一个元素替换当前位置，然后pop
+        if (i < this.active.length - 1) {
+          this.active[i] = this.active[this.active.length - 1];
+        }
+        this.active.pop();
         this.free.push(obj);
       }
     }
@@ -1863,7 +1865,12 @@ class ObjectPool {
   // 替代 for(...of arr) arr.draw(ctx)
   draw(ctx) {
     for (let i = 0; i < this.active.length; i++) {
-      if (this.active[i].alive) this.active[i].draw(ctx);
+      const obj = this.active[i];
+      if (obj.alive) {
+        // 视锥裁剪：跳过屏幕外的粒子
+        if (obj.x < -20 || obj.x > W+20 || obj.y < -20 || obj.y > H+20) continue;
+        obj.draw(ctx);
+      }
     }
   }
   clear() {
@@ -3335,6 +3342,8 @@ function addEnemyBullet(x,y,vx,vy,color='#f44',size=3.5) {
 function addShootEffect(x,y) { spawnParticle(x,y-15,(Math.random()-0.5)*1.5,-2.5,10,'#0ff',1.5); }
 
 function useBomb() {
+  if (bombs <= 0) return;
+  bombs--; if (godMode) bombs = 5; // 防御性编程：useBomb 内部确保炸弹消耗
   initAudio(); sfxBomb();
   bombFlashTimer = 8;
   shakeAmount = 8; shakeDuration = 18;
@@ -4069,7 +4078,7 @@ function playerHit() {
   // 自动炸弹：EASY/NORMAL被击时自动消耗炸弹（扣1命+1炸弹，换120帧无敌）
   if (difficulty !== 'hard' && bombs > 0 && !autoBombUsed) {
     autoBombUsed = true;
-    useBomb(); bombs--;
+    useBomb();
     lives--; player.invincible = 120; player.heatLevel = 0;
     combo = Math.max(0, combo - 3);
     rank = Math.max(1.0, rank - 0.1);
@@ -4387,21 +4396,13 @@ function drawHUD() {
     ctx.fillText('⚡ GOD MODE ⚡', W/2, bBarY - 4);
   }
 
-  // 生命
+  // 生命 & 炸弹（左下区，避免与武器信息重叠）
   ctx.textAlign='left';
-  for (let i=0; i<lives; i++) {
-    ctx.fillStyle='#f44';
-    ctx.font='16px sans-serif';
-    ctx.fillText('❤️', 10+i*24, bBarY+24);
-  }
-  if (lives===0) { ctx.fillStyle='#444'; ctx.font='12px "Orbitron","Courier New",monospace'; ctx.fillText('NO LIFE', 10, bBarY+24); }
-
-  // 炸弹
-  for (let i=0; i<bombs; i++) {
-    ctx.fillStyle='#ff0';
-    ctx.font='14px sans-serif';
-    ctx.fillText('💣', 130+i*22, bBarY+24);
-  }
+  ctx.fillStyle='#f44'; ctx.font='bold 11px "Orbitron","Courier New",monospace';
+  ctx.fillText('❤ x'+lives, 10, bBarY+14);
+  if (lives===0) { ctx.fillStyle='#444'; ctx.fillText('NO LIFE', 10, bBarY+14); }
+  ctx.fillStyle='#ff0';
+  ctx.fillText('💣 x'+bombs, 10, bBarY+32);
 
   // 武器
   ctx.textAlign='center';

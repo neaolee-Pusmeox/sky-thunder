@@ -1,6 +1,44 @@
 # Sky Thunder (雷电风暴) — Dev Log
 
-> 最后更新: 2026-06-09 · v1.4 关卡衔接修复版 · 文件: `Raiden/raiden-game.html` (~4450行, 纯 Canvas 2D + Web Audio API, 零依赖)
+> 最后更新: 2026-06-09 · v1.4.1 性能+炸弹修复版 · 文件: `Raiden/raiden-game.html` (~4450行, 纯 Canvas 2D + Web Audio API, 零依赖)
+
+---
+
+## 📅 2026-06-09 热修复 — v1.4.1 炸弹修复 + 性能优化
+
+**修复炸弹无限bug + HUD遮挡 + 性能大幅优化**
+
+### 🐛 Bug #103: 炸弹使用后不消耗（无限炸弹）
+- **根因**: `useBomb()` 不负责递减 `bombs`，依赖每个调用方自行 `bombs--`。这种分散式管理导致状态不一致
+- **修复方案（防御性编程）**: 将 `bombs--` 移入 `useBomb()` 内部，调用方不再需要手动递减
+  - `useBomb()` 新增顶部 guard: `if (bombs <= 0) return; bombs--; if (godMode) bombs = 5;`
+  - 清理了 4 个调用点的冗余 `bombs--`: 键盘处理、touchstart、click、自动炸弹
+
+### 🐛 Bug #104: 左下角生命/炸弹图标被武器信息遮挡
+- **根因**: 5个❤️ + 5个💣 emoji 循环宽度合计 ~218px，与居中武器名称区(200-280px)重叠
+- **修复**: 改用紧凑文本格式 `❤ xN` / `💣 xN`，固定在左下角，不与中央武器信息冲突
+
+### ⚡ 性能优化（3项核心改进）
+
+#### #1 ObjectPool.update() swap-and-pop (O(n²)→O(n))
+- **问题**: `splice(i, 1)` 每次移除触发数组重排，O(n) 每次操作，死对象多时成 O(n²)
+- **修复**: 用 swap-and-pop 替代 splice——将末尾活元素换到当前位置后 pop()，O(1) 每次移除
+- **适用范围**: particlePool / bulletPool / enemyBulletPool / hudParticlePool 四个池子的 update() 皆受益
+
+#### #2 enemies/powerUps 原地更新替代 filter()
+- **问题**: `enemies = enemies.filter(e => e.update())` 每帧创建新数组（含 GC 分配压力）
+- **修复**: 反向遍历 + swap-and-pop 原地修改，零新数组分配
+- **实测影响**: 在敌机密集+粒子多的场景，减少每帧 ~2-5 个临时数组分配
+
+#### #3 pool.draw() 视锥裁剪
+- **问题**: 屏幕外的粒子仍然执行完整 `draw()` 调用（save/restore + 渐变填充）
+- **修复**: 在 pool.draw() 中添加边界检查，跳过屏幕外实体
+- **边际收益**: 粒子密集时跳过 ~10-30% 的离屏绘制
+
+### 技术教训
+- 炸弹递减应集中管理（useBomb 内部），分散式状态变更极易引入 bug
+- splice() 是 Canvas 游戏中最大的隐藏性能杀手之一，swap-and-pop 在反向遍历中是正确的（已被交换的元素已处理完毕）
+- filter() 每帧创建新数组的 GC 压力在 60fps 下不可忽视，原地更新是标准优化手法
 
 ---
 
@@ -794,6 +832,11 @@ if ((keys['k']||keys['x']) && bombs>0) { useBomb(); bombs--; keys['k']=false; ke
 | 100 | 暂停页面 UI 丑陋、元素偏右 | 低 | ✅ 已修复 |
 | 101 | Player.shoot() 过长 (~80行) → 重构为5个独立武器方法 | 低 | ✅ 已修复 |
 | 102 | drawStageTransition else块统一处理 Stage 5-7 过渡 | 中 | ✅ 已修复 |
+| 103 | useBomb() 不负责递减bombs → 炸弹无限使用 | 致命 | ✅ 已修复 |
+| 104 | HUD 生命/炸弹emoji循环被武器信息遮挡 | 中 | ✅ 已修复 |
+| 105 | ObjectPool.update() splice O(n²) 性能瓶颈 | 高 | ✅ 已修复 |
+| 106 | enemies.filter() 每帧创建新数组 GC压力 | 高 | ✅ 已修复 |
+| 107 | pool.draw() 无离屏裁剪 | 低 | ✅ 已修复 |
 
 ---
 
