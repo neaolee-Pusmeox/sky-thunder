@@ -1,1031 +1,120 @@
 # Sky Thunder (雷电风暴) — Dev Log
 
-> 最后更新: 2026-06-09 · v1.5 深度优化版 · 文件: `Raiden/raiden-game.html` (~4500行, 纯 Canvas 2D + Web Audio API, 零依赖)
+> 最后更新: 2026-06-20 · **v2.0.1** · 单文件 `raiden-game.html`（Canvas 2D + Web Audio，零依赖）
 
 ---
 
-## 📅 2026-06-09 深度优化 — v1.5 性能优化 + 武器系统模块化
+## 当前版本 (v2.0.x)
 
-**深度性能优化（save/restore消除）+ WeaponManager重构**
-
-### ⚡ 深度性能优化（2项核心改进）
-
-#### #1 消除 Bullet/EnemyBullet 的 ctx.save()/ctx.restore()
-- **问题**: 每发子弹绘制时各自调用 save/restore，100+ 活跃子弹 = 200+ 次 save/restore 每帧
-- **修复**: 手动重置被修改的 ctx 属性（globalAlpha/lineCap/lineWidth），由 pool.draw() 提供单次外层 save/restore
-- **净效果**: 200+ save/restore → 4 次（每个对象池 1 次），显著降低 GPU 状态切换开销
-
-#### #2 pool.draw() 批量 save/restore
-- **问题**: 各实体 draw() 独立管理状态，累积大量状态切换
-- **修复**: 对象池 draw() 包裹整批绘制在 ctx.save()/ctx.restore() 中，内部实体无需各自保存状态
-- **适用范围**: particlePool / bulletPool / enemyBulletPool / hudParticlePool
-
-### 🔧 武器系统模块化 (WeaponManager)
-- **提取**: 新建 `WeaponManager` 类，封装武器状态和逻辑
-  - `current` / `level` — 当前武器索引和等级
-  - `cycle(px, py)` — 切换武器（接收玩家坐标参数，不依赖全局 player）
-  - `upgrade()` — 升级武器等级
-  - `getCooldown(rapidFire)` — 计算射击冷却（接收 rapidFire 布尔值）
-  - `getName()` / `getColor()` / `getIcon()` — UI 访问器
-- **解耦**: 消除 Player.shoot() 对全局 weaponLevel/currentWeapon 的依赖
-- **清理**: 删除旧的 weaponLevel / currentWeapon / weaponNotifyTimer / weaponNotifyWeapon 全局变量
-- **迁移**: 22 处 weaponLevel 引用 → weaponMgr.level，HUD 渲染使用 weaponMgr 访问器
-
-### 🧹 代码清理
-- 删除未完成的离屏 Canvas 背景缓存死代码（bgCanvas/bgCtx/bgDirty 等）
-
-### 技术教训
-- ctx.save()/ctx.restore() 是 Canvas 2D 最昂贵的操作之一，每帧数百次调用显著拖慢帧率
-- 全局状态变量应封装到专用管理类中，避免散落在多个位置的直接引用
-- 模块间应通过参数传递而非全局变量通信（如 WeaponManager.cycle(px,py) 而非直接读 player.x）
-- 正则全局替换 (`/foo/g`) 需谨慎，可能意外修改字符串字面量和声明语句
-
----
-
-## 📅 2026-06-09 热修复 — v1.4.1 炸弹修复 + 性能优化
-
-**修复炸弹无限bug + HUD遮挡 + 性能大幅优化**
-
-### 🐛 Bug #103: 炸弹使用后不消耗（无限炸弹）
-- **根因**: `useBomb()` 不负责递减 `bombs`，依赖每个调用方自行 `bombs--`。这种分散式管理导致状态不一致
-- **修复方案（防御性编程）**: 将 `bombs--` 移入 `useBomb()` 内部，调用方不再需要手动递减
-  - `useBomb()` 新增顶部 guard: `if (bombs <= 0) return; bombs--; if (godMode) bombs = 5;`
-  - 清理了 4 个调用点的冗余 `bombs--`: 键盘处理、touchstart、click、自动炸弹
-
-### 🐛 Bug #104: 左下角生命/炸弹图标被武器信息遮挡
-- **根因**: 5个❤️ + 5个💣 emoji 循环宽度合计 ~218px，与居中武器名称区(200-280px)重叠
-- **修复**: 改用紧凑文本格式 `❤ xN` / `💣 xN`，固定在左下角，不与中央武器信息冲突
-
-### ⚡ 性能优化（3项核心改进）
-
-#### #1 ObjectPool.update() swap-and-pop (O(n²)→O(n))
-- **问题**: `splice(i, 1)` 每次移除触发数组重排，O(n) 每次操作，死对象多时成 O(n²)
-- **修复**: 用 swap-and-pop 替代 splice——将末尾活元素换到当前位置后 pop()，O(1) 每次移除
-- **适用范围**: particlePool / bulletPool / enemyBulletPool / hudParticlePool 四个池子的 update() 皆受益
-
-#### #2 enemies/powerUps 原地更新替代 filter()
-- **问题**: `enemies = enemies.filter(e => e.update())` 每帧创建新数组（含 GC 分配压力）
-- **修复**: 反向遍历 + swap-and-pop 原地修改，零新数组分配
-- **实测影响**: 在敌机密集+粒子多的场景，减少每帧 ~2-5 个临时数组分配
-
-#### #3 pool.draw() 视锥裁剪
-- **问题**: 屏幕外的粒子仍然执行完整 `draw()` 调用（save/restore + 渐变填充）
-- **修复**: 在 pool.draw() 中添加边界检查，跳过屏幕外实体
-- **边际收益**: 粒子密集时跳过 ~10-30% 的离屏绘制
-
-### 技术教训
-- 炸弹递减应集中管理（useBomb 内部），分散式状态变更极易引入 bug
-- splice() 是 Canvas 游戏中最大的隐藏性能杀手之一，swap-and-pop 在反向遍历中是正确的（已被交换的元素已处理完毕）
-- filter() 每帧创建新数组的 GC 压力在 60fps 下不可忽视，原地更新是标准优化手法
-
----
-
-## 📅 2026-06-09 热修复 — v1.4 关卡衔接修复 + 暂停页重设计
-
-**修复致命BUG：第5关Boss击杀后游戏卡死 + Stage 5显示为'最后一关'**
-
-### 🐛 致命BUG #98: Stage 5 Boss击杀后游戏完全卡死
-- **现象**: 第5关杀死Boss后页面完全卡死，可进暂停但退出后游戏依然卡死
-- **根因**: `STAGE_THEMES` 数组第4个元素 `FINAL BATTLE` 后存在尾随逗号 `,`，创建了空槽位 index 5 = `undefined`
-  - Stage 5 通关后 `levelComplete()` 将 `transitionStage` 设为 6
-  - `drawStageTransition()` 中 `stage = Math.min(6, 7) - 1 = 5`
-  - `theme = STAGE_THEMES[5]` = `undefined` → `ctx.fillStyle = theme.bgColor` 抛 TypeError → 游戏循环崩溃
-- **影响范围**: 100% 可复现，非偶发 bug，Stage 5 Boss 被击败后必定触发
-- **修复**: 删除尾随逗号，重排 7 个 stage theme 使索引一一对应
-
-### 🐛 Bug #99: Stage 5 过渡文字显示为'最后一关'
-- **根因**: Stage 5 theme 名为 `FINAL BATTLE / 最终决战`，未考虑新增的第6第7关
-- **修复**: 重命名 Stage 5 为 `CORE FORTRESS / 核心要塞`（与Boss名一致），Stage 7 保留 `FINAL SANCTUM / 终焉神殿` 作为真正最终关
-
-### 🎨 暂停页面重新设计
-- **问题**: 原暂停页元素被挤在页面中央靠右位置，不规则且难看
-- **新设计**: 暗色半透明容器 `.pause-box` + 居中对齐 + 入场淡入缩放动画
-  - 暂停图标脉冲动画、标题/副标题层次分明、分隔线装饰
-  - 音量滑块重新布局（横向排列）、按钮独立样式类
-  - 底部按键提示、hover/active 状态过渡
-- **CSS**: 新增 100+ 行暂停页面专属样式
-
-### 🔧 其他修复
-- **过渡动画扩展**: `drawStageTransition()` 的 `else` 块拆分为 Stage 5→6（金色→翡翠绿渐变）、Stage 6→7（翡翠→白辉渐变）、Stage 7 三个独立动画
-- **Player.shoot() 重构**: 5种武器的发射逻辑提取为独立方法 `_shootTwin/_shootSpread/_shootLaser/_shootMissile/_shootLightning`，主 `shoot()` 缩减为简洁 switch 分发
-- **项目清理**: 删除临时修复脚本 `fix_all.js`
-
-### 技术教训
-- JavaScript 数组中尾随逗号 `[a, b,]` 不创建空槽位，但 `[a, b,, c]` 会 → 数组索引偏移是静默的，访问 `undefined` 才暴露
-- 单文件 HTML 用 Node.js 脚本做字符串替换比 `str_replace` 工具更可靠（换行符匹配问题）
-- 暂停页面应使用独立 CSS 类而非内联样式，便于维护和动画
-
----
-
-## 📅 2026-06-09 热修复 — v1.3 稳定性修复
-
-**修复致命BUG：被击中后机体永久消失 + 对象池引用加固**
-
-### 🐛 致命BUG #1: 机体被击中后消失不复活
-- **现象**: 进入游戏后机体触雷或被击中会爆炸消失，有多条命但机体不见，关卡正常继续
-- **根因**: 游戏主循环中缺少 `player.update()` 调用。`playerHit()` 将 `player.invincible` 设为 100，但无代码递减该计时器 → 闪爍效果永久持续 → 机体不可见
-- **连锁影响**: 玩家也无法移动（按键输入未处理）和射击（`shoot()` 未调用）
-- **修复**: 在 `gameLoop()` 的 `updateTouchControlsVisibility()` 之后、`bulletPool.update()` 之前添加 `player.update();`
-
-### 🛡️ 对象池引用加固 (#2)
-- **问题**: `Player.shoot()` 中使用 `bulletPool.active[bulletPool.active.length-1]` 模式设置子弹特殊属性（`weapon`/`penetrate`/`cluster`），若对象池满导致 `acquire()` 返回 null，该引用指向错误的子弹
-- **修复方案**: 改为捕获 `addBullet()` 返回值 + null 检查
-  - 激光 Lv6: 3发穿透弹 → `_bl1`/`_bl2`/`_bl3` 带 `if` 守卫
-  - 导弹 Lv6: 子母弹 → `_mb` 带 `if` 守卫
-  - 雷电光束 全等级: 8处 `weapon=4` 标记 → `_lb0`~`_lb6` 带 `if` 守卫
-- **受影响范围**: `Player.shoot()` 中 case 2/3/4 三个武器分支，共 12 处引用全部加固
-
-### 🔧 项目清理
-- 删除 12 个临时修复脚本（`add_touch.js` / `fix_bugs.js` / `fix_extra_parens.js` / `fix_pool_class.js` / `refactor_pool.js` / `fix_pool_integration.js` / `fix_remaining_pool.js` / `fix_pool_new.js` / `cleanup_dead_vars.js` / `final_fixes.js` / `fix_debris.js` / `harden_pool_refs.js`）
-- 端到端浏览器测试通过：菜单→选难度→游戏→被击中→复活→切换武器，全部正常
-- 无 JavaScript 控制台错误
-
-### 技术教训
-- 对象池集成时容易遗漏 `player.update()` 等核心调用，需端到端测试验证
-- `bulletPool.active[active.length-1]` 是脆弱的反模式，应始终使用 `acquire()` 返回值
-- 大型 HTML 文件用 str_replace 匹配精确换行符不可靠，Node.js 脚本更稳妥
-
----
-
-## 📅 2025-06-08 开发总结 — v1.2 内容扩展版
-
-**新增 Stage 6 + Stage 7，2个全新Boss + 关卡场景**
-
-### 🚀 新增内容
-
-#### Stage 6: 时间裂隙 (TEMPORAL RIFT)
-- **Boss: 时间扭曲者 (TIME DISTORTER)** — 绿色能量生命体，虫洞撕裂入场
-- **场景主题**: 深青色调星云 (`nebulaHueBase: 160`)，时间加速感星星 (`starSpeedMul: 1.8`)
-- **攻击模式**:
-  - 阶段1: 快慢交替螺旋弹（快弹4.5速/慢弹1.8速）+ 时停区域（150帧间隔释放环形弹幕+减速场视觉标记）
-  - 阶段2 (HP<50%): 逆向弹（每60帧8发，先远离再反弹）+ 时间分身（每120帧在附近生成3个残影释放弹幕）+ 旋转激光
-  - 重力井: HP<50%持续牵引玩家向Boss靠近
-- **视觉**: 旋转齿轮主体 + 12齿刻度 + 时停区域虚线环 + 绿色核心辉光
-
-#### Stage 7: 终焉神殿 (FINAL SANCTUM)
-- **Boss: 湮灭之神 (ANNIHILATION GOD)** — 白色神性存在，天降光柱入场
-- **场景主题**: 深红/金色星云 (`nebulaHueBase: 0`)，最快星星速度 (`starSpeedMul: 2.2`)
-- **攻击模式**:
-  - 阶段1 (HP>60%): 扇形弹幕 + 自机狙激光（竖排密集弹幕横扫）
-  - 阶段2 (HP 30-60%): 16向密集螺旋 + 侧方弹墙（左右同时夹击）+ 追踪弹
-  - 阶段3 (HP<30%): 28向全屏旋转风暴 + 天降弹雨 + 快环弹 + 屏幕持续震动
-  - 无人机: 所有阶段每80帧生成（最多4个白色护卫机）
-- **视觉**: 40节点旋转光环 + 天使翼状结构 + 核心脉冲光球 + 3个挂载点
-
-#### 技术改动
-- `BOSS_CONFIGS` 扩展至7个（索引5-6新增）
-- `STAGE_SCENES` 扩展至7个场景
-- `STAGE_THEMES` 扩展至7个主题
-- 新入场类型: `wormhole`（虫洞漩涡粒子）+ `descend`（天降光柱+神圣粒子）
-- 入场绘制: 虫洞虚线环 + 天降线性渐变光柱
-- 星星颜色扩展: `starColorBase: 3` 支持金白色星星
-- 关卡上限: 5→7（`levelComplete()`, `getScene()`, `drawStageTransition()`, Boss索引）
-- 帮助面板: "5大关卡"→"7大关卡"，最终Boss名称更新
-
----
-
-## 📅 2025-06-08 热修复 — v1.1 补丁
-
----
-
-## 📅 2025-06-08 热修复 — v1.1 补丁
-
-**修复致命BUG：死亡后Game Over画面不显示**
-
-### 🐛 根因分析
-- `gameOver()` 函数中调用 `stopBGM()` 但该函数从未被正确定义（v1.1 的 BGM 代码插入因引号格式不匹配而静默失败）
-- `stopBGM()` ReferenceError 导致 `gameOver()` 崩溃在 `show('gameOverScreen')` 之前
-- 游戏状态设置为 STATE.GAMEOVER，但 DOM overlay 从未显示 → 玩家看到全黑背景+星星
-
-### 🔧 修复内容 (本次会话)
-1. **BGM 函数重新插入**: 使用精确字符串匹配，`startBGM/stopBGM/bgmTick` 正确写入
-2. **playerHit() 自动炸弹**: EASY/NORMAL 被击时自动消耗炸弹（扣1命+1炸弹，120帧无敌）
-3. **useBomb() 炸弹强化**: bombFlashTimer=8 + 3层冲击波环 + 伤害20→25
-4. **levelComplete() 关卡结算**: stageClearTimer=90 + heatLevel重置
-5. **showMenu() 停止BGM**: 返回菜单时调用 stopBGM()
-6. **武器过热追踪**: 射击时 heatLevel +0.06/帧，停火时 -0.02/帧
-7. **HARD 自杀弹**: 敌人死亡释放环形弹幕（Tank 8发, Speeder 6发, 其余4发），使用 addEnemyBullet 确保难度缩放
-8. **难度子弹尺寸**: EASY ×0.75, HARD ×1.15（addEnemyBullet 中 diffSize 计算）
-9. **关卡结算浮层**: Stage Clear 文字动画（缩放+淡出），显示奖励信息
-10. **hit() 双重触发防护**: 添加 `if (!this.alive) return false` 守卫，防止多弹同时命中导致重复死亡逻辑
-11. **重复 combo 里程碑块移除**: 清理游戏循环中两个重复的 combo 渲染块
-12. **难度描述更新**: EASY"自动炸弹", NORMAL"自动炸弹", HARD"自杀弹"
-13. **initGame() 变量重置**: bombFlashTimer/stageClearTimer/autoBombUsed 在重开时清零
-
-### 技术教训
-- Windows 环境下 Node.js 读写文件产生 `\r\n` 换行符，与 `\n` 的字符串匹配会静默失败
-- 解决方案：使用 indexOf + substring 做字节级替换，避免依赖换行符匹配
-- str_replace 工具对大型单文件 HTML 的可靠性不如文件级 Node.js 脚本
-
----
-
-## 📅 2025-07-17 开发总结 — v1.1 品质打磨版
-
-**本轮成果 — 10项重大功能 + 6项修复，游戏全面现代化**
-
-### 🚀 新增功能 (10项)
-
-#### #88 自动炸弹系统 (Auto-Bomb)
-- EASY/NORMAL 难度下，被击中时若有炸弹自动使用，避免直接死亡
-- 自动炸弹消耗1命 + 1炸弹，但给予120帧无敌保护（普通被击100帧）
-- Rank惩罚减半（-0.1 vs -0.2），连击惩罚减半（-3 vs -5）
-- HARD 难度禁用自动炸弹，高手需手动管理资源
-- `autoBombUsed` 标志位防止递归调用
-
-#### #89 HARD 难度自杀子弹
-- HARD 难度下敌人死亡时释放环形子弹：Tank 8发、Speeder 6发、其余4发
-- 子弹颜色 #f84（橙红），速度2.5，造成弹幕密度质变
-- Boss 不触发自爆，避免过于不公
-
-#### #90 炸弹全屏闪白 + 冲击波环
-- 炸弹使用时触发 8 帧全屏白色闪光 (`bombFlashTimer`)
-- 3层同心冲击波环从屏幕中心扩散（白色→青色→蓝色）
-- 炸弹伤害从 20 提升至 25，振动增强
-
-#### #91 关卡结算画面
-- Boss 击败后显示 "STAGE X CLEAR" 浮层（90帧持续时间）
-- 显示奖励分数、+1生命/+2炸弹、下一关提示
-- 在关卡过渡动画期间渲染，视觉效果连贯
-
-#### #92 字母评级系统
-- 通关结算显示 S/A/B/C/D 评级
-- S级条件：通关 + 最大连击≥60 + 剩余生命≥3
-- A级：通关 或 得分>50000
-- B/C/D 按分数递减
-- 评级带对应颜色光效（S=金,A=绿,B=青,C=橙,D=红）
-
-#### #93 微型战机生命显示
-- 底部HUD用迷你战机图标替代 ❤️ 符号
-- 每架迷你战机含机身、座舱、引擎火焰动画
-- 引擎火焰交替闪烁增加动态感
-
-#### #94 Boss 攻击间隔难度区分
-- 5个 Boss 的攻击间隔现在受难度影响
-- EASY: 攻击间隔 ×1.5~1.6（显著放缓）
-- HARD: 攻击间隔 ×0.7~0.75（显著加快）
-- 各 Boss 保持合理最低间隔防止极端情况
-
-#### #95 武器过热辉光
-- 持续射击时玩家机体累积热量 (`heatLevel`)
-- 热量 >30% 时显示橙色光环 + 引擎高亮
-- 停止射击时热量缓慢下降
-- 死亡或过关时热量自动重置
-
-#### #96 程序化背景音乐 (BGM)
-- Web Audio API 合成简单背景节拍
-- 底鼓（55Hz正弦扫频）+ 三角波旋律（130/165/196/220Hz循环）+ 方波点缀
-- 140ms 拍子间隔，32拍循环
-- 开始游戏自动播放，游戏结束/返回菜单停止
-- 暂停时保持播放
-
-#### #97 UI 文案更新
-- 难度按钮描述更新：EASY"自动炸弹·敌人缓慢"、NORMAL"自动炸弹·标准挑战"、HARD"自爆敌人·Boss狂暴"
-- 帮助面板添加自动炸弹、自爆弹、BGM 说明
-
-### 🐛 修复 (6项)
-- **BGM 内存泄漏**: 震荡器清理逻辑从永真条件改为 expires 时间戳过滤
-- **BGM 重开不播放**: `restartGame()` 添加 `stopBGM()` + `initAudio()` + `startBGM()` 调用
-- **Boss 攻击间隔地板值**: 恢复原始最低间隔（8/5/10/6），仅应用难度倍率
-- **Lv5 Boss 难度缩放**: 修复 Math.max 导致的 HARD 无变化问题，改用合理最低值3
-- **武器热量不重置**: 死亡和过关时重置 `player.heatLevel = 0`
-- **关卡结算重复代码**: 结算浮层在过渡动画块中渲染，移除主循环死代码
-
-### 状态
-**v1.1 品质打磨版** · 10项新功能 + 6项修复 · EASY/NORMAL/HARD 三级难度进一步分化
-
----
-
----
-
-## 迭代路线图
-
-### v1.0 ✅ 已完成 — 核心游戏循环
-5个独特Boss · 5种武器(Lv6终极) · 7种敌人+精英 · Graze/Combo/Rank三大系统 · 作弊模式
-
----
-
-### v1.1 🎯 品质打磨 (Quality of Life)
-
-| 优先级 | 功能 | 说明 |
-|--------|------|------|
-| ⭐⭐⭐ | **高分存档** | localStorage 保存/加载最高分，按难度分榜 |
-| ⭐⭐⭐ | **关卡间整备** | 通关后显示得分统计（击杀数/擦弹数/最大combo/用时），3秒倒计时 |
-| ⭐⭐⭐ | **通关演出** | 通关5关后的结算画面 + 战绩回顾 + 彩蛋 |
-| ⭐⭐ | **键位自定义** | 设置界面允许重新绑定所有操作键 |
-| ⭐⭐ | **BGM系统** | 简单的程序化背景音乐（Web Audio合成），关卡切换时渐变过渡 |
-| ⭐⭐ | **暂停菜单完善** | 增加 BGM 音量滑块、画面效果开关（粒子/屏幕震动） |
-| ⭐ | **操作提示优化** | 首次游戏时浮动按键提示，3秒后淡出 |
-| ⭐ | **性能模式** | 低端设备自动降低粒子数量上限 |
-
----
-
-### v1.2 🚀 内容扩展 (Content Expansion)
-
-| 优先级 | 功能 | 说明 |
-|--------|------|------|
-| ⭐⭐⭐ | **Stage 6-7** | 2个全新关卡 + 2个全新Boss设计 |
-| ⭐⭐⭐ | **隐藏关卡** | 满足条件（无死亡/高combo）进入隐藏Stage 8，奖励Boss |
-| ⭐⭐ | **第6武器：黑洞** | 发射慢速引力弹，吸引附近敌弹并消除，Lv6引爆造成范围伤害 |
-| ⭐⭐ | **精英Boss变体** | 每个Boss有5%概率出现精英版本（新颜色+强化弹幕+双倍分数） |
-| ⭐⭐ | **关卡环境机关** | Stage 3 电流栅栏、Stage 5 能量脉冲波等环境伤害 |
-| ⭐ | **道具轮盘系统** | 连续收集同色道具触发轮盘奖励（额外生命/全屏清敌/短暂无敌） |
-| ⭐ | **挑战波** | 纯弹幕生存波（无敌人，大量弹幕，存活30秒奖励道具） |
-
----
-
-### v1.3 🔧 技术重构 (Technical Foundation)
-
-| 优先级 | 功能 | 说明 |
-|--------|------|------|
-| ⭐⭐⭐ | **代码模块化** | 拆分为独立 .js 文件（audio/entities/hud/bosses/config），HTML 仅保留入口 |
-| ⭐⭐⭐ | **自动测试** | Python + Selenium 浏览器自动化回归测试 |
-| ⭐⭐ | **对象池化** | Particle/Bullet/EnemyBullet 使用真正的对象池，消除GC抖动 |
-| ⭐⭐ | **触屏适配** | 虚拟摇杆 + 自动射击 + 点击炸弹，移动端可玩 |
-| ⭐⭐ | **手柄支持** | Gamepad API，支持 Xbox/PS 手柄 |
-| ⭐ | **帧率独立** | delta-time 驱动逻辑，支持 120Hz/144Hz 显示器 |
-| ⭐ | **代码压缩构建** | 简单的 minify 脚本，产出 `raiden-game.min.html` |
-
----
-
-### v2.0 🌟 重大特性 (Major Features)
-
-| 优先级 | 功能 | 说明 |
-|--------|------|------|
-| ⭐⭐⭐ | **本地双人合作** | 1P WASD+J/K, 2P 方向键+Numpad1/2，分屏或同屏协作 |
-| ⭐⭐⭐ | **回放系统** | 记录每帧输入，通关后可回放完整对局（作为学习工具） |
-| ⭐⭐ | **成就系统** | 20+成就（"无伤通关""100连击""贴脸达人"），localStorage存储 |
-| ⭐⭐ | **练习模式** | 选择任意Boss直接对战，可调弹幕速度/密度 |
-| ⭐ | **自定义涂装** | 玩家机体颜色自定义（RGB滑块） |
-| ⭐ | **统计面板** | 详细数据：命中率/擦弹率/武器使用占比/死亡位置热图 |
-
----
-
-### v2.5+ 💡 远期愿景 (Long-term Vision)
-
-| 功能 | 说明 |
+| 版本 | 要点 |
 |------|------|
-| **在线排行榜** | 简单的后端服务（甚至可用 GitHub Gist 作为存储） |
-| **弹幕编辑器** | 可视化设计自定义弹幕模式，导出/导入JSON |
-| **种子随机模式** | 每日挑战种子，所有玩家同一天面对相同敌人生成 |
-| **周目系统** | 通关后解锁更高难度周目（New Game+），弹幕速度和密度翻倍 |
-| **Steam Deck 适配** | 原生分辨率 + 手柄映射 + 离线PWA |
+| **v2.0.1** | 穿透激光修复、`beginPlaySession()` 开局流程、菜单/帮助/暂停文案对齐 |
+| **v2.0** | 三档难度机制分轨、敌弹四维缩放、分难度高分榜、Hard 自杀弹 |
+| **v1.9.1** | 手机端暂停/武器/炸弹按钮、菜单战机锚点、冲击波反馈 |
+| **v1.9** | 冷暖阵营视觉、Web Audio 四路混音（weapon/threat/ui/impact） |
+| **v1.8** | 触屏跟手、局次令牌 `gameRunId`、结算统计补全、稳定性补丁 |
+
+**硬性约束（不变）**：运行时只有 `raiden-game.html`，不引入框架、构建链、外部素材包。`smoke-check.mjs` 仅开发验证用。
+
+**日志与代码不一致（勿当已实现）**：成就系统、每日挑战、暂停页改难度、BGM 音量滑块、独立设置页。见 v1.6/v1.7 历史，当前单文件未落地。
+
+---
+
+## v2.0.1 — 审计修复 (2026-06-20)
+
+- 穿透激光：`penetrate` 弹不再无条件销毁，最多连续命中 4 目标。
+- 开局：`initGame()` 不立即刷波；`beginPlaySession()` 统一出击/重开，首波在关卡过渡后生成。
+- 文案：菜单 pill、mobile-info、帮助页同步自动炸弹 / Hard 自杀弹 / 双指松手放雷。
+- 帮助页补全 7 小怪、精英、Buff、Graze/TENSION/COMBO、分榜说明；暂停页只读显示当前难度。
+
+---
+
+## v2.0 — 难度阶梯 (2026-06-20)
+
+三档签名：**EASY** 自动炸弹 + 慢弹小弹；**NORMAL** 基准；**HARD** 自杀弹 + 无自动炸弹 + 高分倍率。
+
+新增字段：`enemyBulletSpeedMul`、`enemyBulletSizeMul`、`enemyFireRateMul`、`grazeMul`、`bossIntervalMul`、`maxRank` 等；`playerBulletSpeed` 仅影响玩家弹速。
+
+- `addEnemyBullet()` 统一敌弹速度/尺寸；`buildWaveTypePool(level)` 按难度控敌种。
+- Rank：Easy 上限 2.0；擦弹 `50×rank×grazeMul`。
+- 高分：`skyThunder_highScore_easy|normal|hard`。
+
+---
+
+## v1.8 ~ v1.9.1 摘要
+
+- **移动端**：单指跟手 + 自动开火；右侧暂停/武器/炸弹；双指按住后松手备用放雷。
+- **视觉**：玩家冷色、敌机暖色、敌弹高对比；HUD 降噪。
+- **音效**：程序化 SFX + 轻量 BGM；分 bus 混音。
+- **反馈**：炸弹/击毁/Boss 警告冲击波；菜单 CSS 战机剪影。
+- **稳定**：`gameRunId` 隔离延迟 spawn；Game Over 六维统计。
+
+---
+
+## 历史归档 (v1.0 ~ v1.7)
+
+只留里程碑，细节以 git 历史为准。
+
+### v1.0 核心 (2025-06)
+7 关 ×（5 波 + 1 Boss）、5 武器 Lv.6 终极、7 类敌人 + 精英、Combo/Graze/Rank、对象池、作弊 `G`。
+
+### v1.1 ~ v1.4 打磨与热修
+- 三档难度雏形、自动炸弹、Hard 自杀弹、Boss 间隔分档。
+- 炸弹消耗集中到 `useBomb()`；Stage 5→6 卡死修复。
+- `WeaponManager` 模块化；Canvas save/restore 与 swap-and-pop 性能优化。
+
+### v1.5 ~ v1.6 工程化尝试（部分未进当前文件）
+- CSS Token、GameOver 扩展统计、暂停页 SFX 滑块：**部分保留**。
+- 设置页、BGM 滑块、粒子等级、成就、每日挑战：**仅日志，当前 html 无**。
+
+### v1.7 计划功能（未落地）
+成就 20 项、每日挑战 seeded RNG、会话追踪钩子。代码曾存在于迭代分支，**当前 `raiden-game.html` 不含**。
 
 ---
 
 ## 项目概览
 
-Sky Thunder 是一款 **雷电风格竖版卷轴射击游戏 (shmup)**，单 HTML 文件即开即玩。所有逻辑、渲染、UI、音效均在一个文件中，使用原生 Canvas 2D API + Web Audio API。
+竖版 STG，480×720 内部分辨率，CSS 自适应。Chrome / Edge / Safari 打开即玩。
 
-### 快速启动
-用 Chrome/Edge 直接打开 `raiden-game.html`，点击 START 即可。
+```bash
+# 开发校验
+node smoke-check.mjs
+```
 
----
+### 状态机
+`MENU` → `PLAYING`（含关卡过渡）→ `PAUSED` / `GAMEOVER`
 
-## 游戏架构
+### 核心系统
+| 系统 | 说明 |
+|------|------|
+| 武器 ×5 | 双发/散弹/激光/导弹/雷电链，W 道具升至 Lv.6 |
+| 难度 ×3 | EASY / NORMAL / HARD，机制分轨 |
+| Rank | 随时间上升，影响敌弹密度与速度（HUD: TENSION） |
+| Combo / Graze | 连击倍率、擦弹加分 |
+| Boss ×7 | `BOSS_CONFIGS` 数据驱动，多阶段弹幕 |
 
-### 状态机 (4 状态)
-| 状态 | 枚举值 | 说明 |
-|------|--------|------|
-| `MENU` | 0 | 初始菜单，选择难度后出击 |
-| `PLAYING` | 1 | 游戏中，含关卡过渡动画 |
-| `PAUSED` | 2 | 暂停 (P 键切换) |
-| `GAMEOVER` | 3 | 死亡或通关 |
-
-### 核心类 (9 个)
-| 类 | 职责 |
-|---|------|
-| `Nebula` | 背景星云雾气 |
-| `Star` | 背景闪烁星星 |
-| `Particle` | 爆炸/特效粒子 (支持旋转方形碎片) |
-| `Player` | 玩家机体 (移动/射击/无敌/护盾/判定点) |
-| `Bullet` | 玩家子弹 |
-| `EnemyBullet` | 敌方子弹 (光晕/光环/拖尾/擦弹标记) |
-| `Enemy` | 敌方单位 (scout/tank/speeder/turret/boss) |
-| `PowerUp` | 道具 (武器升级/炸弹/生命，支持磁吸) |
-| *(无)* | Rank 动态难度系统 (全局变量) |
-
-### 操作键位
+### 操作
 | 键 | 功能 |
 |----|------|
-| `↑↓←→` / `WASD` | 移动 |
-| `Shift` | 低速移动 (速度×0.38，判定点高亮) |
-| `J` / `Z` | 射击 |
-| `K` / `X` | 炸弹 |
-| `M` / `C` | 切换武器 (5种) |
-| `P` | 暂停/继续 (含菜单: 继续/重开/返回/SFX音量) |
-| `R` | 重新开始 |
+| WASD / 方向键 | 移动 |
+| J / Z | 射击 |
+| K / X | 炸弹 |
+| M | 切武器 |
+| P | 暂停 |
+| R | 重开 |
 
 ---
 
-## 修改日志
+## 技术备忘
 
-### 🎯 第9轮: UI打磨 & Boss重构 (#25–#33)
-
-全面提升游戏体验和内容深度。
-
-#### #25 暂停菜单增强
-- 新增 SFX 音效音量滑块 (0–100%)，`setSfxVolume()` 函数
-- 按钮重新设计：▶ 继续 / 🔄 重新开始 / 🏠 返回菜单
-- 暂停界面含暗色半透明遮罩层
-- 音量实时联动 `playSound()` 中 `gain.gain.setValueAtTime(vol * sfxVolume, t)`
-
-#### #26 浮动得分文字系统
-- 新增 `floatTexts` 数组 + `spawnFloatText(x, y, text, color)` 函数
-- 杀敌弹出 `+分数` 浮动文字，擦弹弹出 `GRAZE` 提示
-- 带渐隐 + 缩放动画 (y轴上升 + alpha衰减 + scale 1→1.8)
-- `showMenu()` 和 `initGame()` 中清空防止内存泄漏
-
-#### #27 Graze × Combo 联动
-- 擦弹成功时将 `comboResetTimer` 重置为 0
-- 鼓励贴脸打法：高分玩家可主动骑脸弹幕维持连击
-- 擦弹时同时生成 `spawnFloatText('GRAZE', '#0ff')` 浮动提示
-
-#### #28 TENSION 仪表 (Rank 可视化)
-- 将简单 `RANK X.X` 文字替换为渐变色仪表条
-- 显示 "TENSION" 标签 + 绿→黄→红 动态渐变条
-- 仪表位置：HUD 右上角，长度随 rank (1.0→2.5) 实时变化
-- 让玩家直观理解难度来源
-
-#### #29–#33 5个独特 Boss 设计
-采用**数据驱动架构**：全局 `BOSS_CONFIGS` 数组，每个 Boss 含 `name/sub/color/hpMul/attack/update/draw` 函数。
-
-| Boss | 关卡 | 名称 | 核心机制 |
-|------|------|------|----------|
-| 1 | Stage 1 | 装甲列车 ARMORED TRAIN | 水平扫荡移动，双管齐射弹幕 |
-| 2 | Stage 2 | 隐形炮艇 STEALTH GUNSHIP | 周期性隐形 (alpha 0.2→1.0)，偷袭式攻击 |
-| 3 | Stage 3 | 导弹驱逐舰 MISSILE DESTROYER | 追踪导弹 + 扇形弹幕混合 |
-| 4 | Stage 4 | 能量母舰 ENERGY CARRIER | 释放 2 个护卫无人机辅助射击 |
-| 5 | Stage 5 | 核心要塞 CORE FORTRESS | 3 阶段传统 Boss (继承原版) |
-
-架构变更：
-- `Enemy` 构造函数中 `this.def = BOSS_CONFIGS[Math.min(level-1, 4)]`
-- `bossAttack()` → 委托 `this.def.attack(this)`
-- Boss `update()` → 委托 `this.def.update(this)`
-- Boss `draw()` → 委托 `this.def.draw(ctx, this)`
-- 非配置型 Boss 回退到原始 else 分支代码
-
-#### Boss 出场信息增强
-- 新增 `pendingBossName` / `pendingBossSub` 变量
-- `spawnWave()` 中设置 Boss 名字到 pending 变量
-- WARNING 演出显示具体 Boss 名称 (如 "装甲列车 ARMORED TRAIN")
-- HUD Boss 血条上方显示 Boss 名称和副标题
-- 相位标签根据 Boss 类型智能显示 (仅 Core Fortress 有多阶段)
-
-### 🐛 Bug 修复 (本轮)
-- **Boss 血条定位错误**: 血条代码补上 `ctx.save()/ctx.translate()/ctx.restore()` 包裹
-- **浮动文字内存泄漏**: `showMenu()` 和 `initGame()` 中清空 `floatTexts` 数组
-- **无人机类型错误**: Energy Carrier 无人机不再使用不存在的 `'drone'` 类型，改用 `'scout'`
-- **Boss 出场即开火**: 委托模式下 Boss 出现前不触发 `bossAttack()`
+1. Canvas 480×720，勿改内部分辨率比例。
+2. Boss 阶段按 `hp/maxHp` 切换；攻击委托 `BOSS_CONFIGS[].attack`。
+3. 擦弹：`grazeBox` 包住 hitbox 但不与机体 hitbox 重叠。
+4. 延迟 spawn 必须带 `gameRunId` 校验。
+5. 难度数值以 `DIFFICULTY` 对象为唯一来源。
 
 ---
 
-### 🐛 第10轮: 紧急热修复 (#34)
+## 后续方向（未承诺）
 
-**严重 BUG**: 游戏卡在初始界面，任何点击无反应。
-
-- **根因**: `drawHUD()` 函数中 `if (phaseLabel)` 代码块缺少闭合 `}`，导致该if块吞并后续所有代码。`drawHUD()` 函数无法闭合，进而吞噬 `playerHit()`、`applyPowerUp()` 等函数及启动代码，JS 解析器报 `Uncaught SyntaxError: Unexpected end of input`，整个脚本无法执行。
-- **修复**: 在 `if (phaseLabel)` 块末尾 (inner if 闭合后) 补上缺失的 `}`
-- 修复后游戏正常加载，菜单按钮响应正常，可进入游戏。
-
----
-
-### 🐛 第11轮: 热修复 (#35–#36)
-
-延续第10轮修复后的两个残留 BUG。
-
-#### #35 Boss 血条双重位移修复
-- **根因**: `Enemy.draw()` 中外层 `ctx.save()/ctx.translate(this.x, this.y)` 已做位移，但内部 Boss 血条绘制代码又做了一次 `ctx.translate(this.x, this.y)`，导致血条出现在 (x×2, y×2) 位置
-- **修复**: 移除内层冗余的 translate 调用，血条现在正确显示在 Boss 上方
-
-#### #36 能量母舰无人机类型过滤修复
-- **根因**: 过滤条件使用不存在的 `e.type === 'drone'`，导致 `filter().length` 恒为 0，无人机生成不受限制
-- **修复**: 改用专用标记 `e.isDrone`——生成无人机时设置 `e.isDrone=true`，过滤时用 `e.isDrone` 精确匹配，不误伤其他 scout 敌人
-
----
-
-### 🚀 第12轮: Boss 血条动画 & 弹幕强化 (#37–#43)
-
-全面提升 Boss 战的视觉反馈和弹幕多样性。
-
-#### #37 Boss HP 平滑过渡动画
-- `Enemy` 构造函数新增 `displayHp`/`lastHp`/`hpFlashTimer`/`prevPhase`/`phaseTransitionTimer` 字段
-- `Enemy.update()` 中 `displayHp` 以 lerp 系数 0.12 平滑追踪实际 `hp`，治疗时瞬间同步
-- `drawHUD()` 血条宽度改用 `boss.displayHp` 计算，实现平滑缩退
-
-#### #38 Boss 受伤闪烁效果
-- 受伤时 `hpFlashTimer=8`，白色半透明覆盖层在血条上闪烁
-- 闪烁 alpha 随计时器衰减：`hpFlashTimer/8*0.5`
-- 相位切换时 `phaseTransitionTimer=30`，为后续颜色过渡动画预留
-
-#### #39 Boss1 装甲列车弹幕强化
-- 新增**自机狙击**：每 90 帧向玩家方向发射 5 发高速追踪弹
-- 新增**扇形弹幕**：每 150 帧释放 13 向扇形散射弹
-- 修复 `specialTimer` 未递增导致的无限弹幕 bug
-
-#### #40 Boss2 隐形炮艇弹幕强化
-- 显形瞬间释放 16 向**圆形扩散弹**（`_becameVisible` 标记触发）
-- 隐身状态每 55 帧发射 3 发红色高速**狙击弹**
-- 修复 `_visible` 初始化时的 guard 条件
-
-#### #41 Boss3 导弹驱逐舰弹幕强化
-- 新增**追踪慢速弹**：每 70 帧 5 发低速大弹（模拟导弹）
-- 血量 <50% 时开启**双环扩散**：每 90 帧 2 层各 12 发旋转弹
-
-#### #42 Boss4 能量母舰弹幕强化
-- 新增**激光扫射**：每 35 帧在正弦偏移位置生成竖排密集弹幕
-- 新增**扩张环弹**：每 120 帧 16 向环形扩散弹
-
-#### #43 Boss5 核心要塞弹幕强化
-- 阶段1：新增慢速**弹墙**（每 120 帧一排下坠弹）
-- 阶段2：追踪弹增至 3 发，环形弹密度从 12→16 发
-- 阶段3：旋转弹 20→24 发，新增快速环弹（每 30 帧 20 发），天降弹雨加速
-
----
-
-### 🚀 第8轮: STG 深度优化 (#14–#24)
-
-借鉴 Raiden IV/V、首领蜂、Crimzon Clover 等经典 STG 最佳实践。
-
-#### #14 自机判定点显示
-- `Player.draw()` 中在机身中心绘制发光小圆点 (半径3px)
-- 按住 Shift 时判定点变为亮绿色高亮 + 光晕
-
-#### #15 擦弹 Graze 系统
-- `EnemyBullet` 新增 `grazed` 属性防止重复计分
-- 擦弹判定框 (48×60) 大于受击判定 (18×28)
-- 擦弹成功：+50×Rank×难度倍率 分数 + 青色粒子 + `sfxGraze()` 高频噪声
-
-#### #16 低速移动 Shift 键
-- 按住 Shift 速度×0.38，精准躲弹幕
-- 判定点同时高亮为绿色
-
-#### #18 道具磁吸
-- `PowerUp.update()` 中检测与玩家距离 < 170px 时自动吸附
-- 吸附力度随距离递减 (近强远弱)
-
-#### #21 爆炸碎片 Debris
-- `Particle` 增加 `rotation`/`rotSpeed`/`shape` 属性
-- 支持 `shape='square'` 旋转方形碎片渲染
-- 敌机死亡额外生成 8~30 个金属色旋转碎片
-
-#### #17 Rank 动态难度系统
-- 全局 `rank` 变量 (1.0~2.5)
-- 随时间缓慢增加 (+0.00015/帧，约 167 秒到上限)
-- 吃道具 +0.02~0.04，放炸弹 -0.15，死命 -0.2
-- 影响敌弹速度 (×rank) 和敌人射速 (/rank)
-- HUD 底部显示当前 Rank 值
-
-#### #19 得分倍率系统
-- 击杀得分 = 基础分 + Combo加成 (combo×15, 最高50) + Rank加成
-- 最终乘以难度倍率 (EASY×0.7, NORMAL×1.0, HARD×1.5)
-
-#### #22 Boss 出场演出
-- Boss 生成时触发 WARNING 动画 (80帧)
-- 红色大字 "WARNING" + "BOSS APPROACHING" 缩放淡出
-- 红色背景闪烁 + 屏幕震动
-
-#### #20 地面目标层
-- 新增 `turret` 敌人类型 (绿色炮台)
-- `isGround` 属性区分地面/空中单位
-- 渲染顺序：星空 → 地面敌人 → 道具 → 敌弹 → 空中敌人
-- 炮台进入屏幕后定点瞄准射击 (Lv2+ 三向射击)
-
-#### #23 粒子数量限制
-- 粒子超过 350 个时裁剪至 300，防止内存膨胀
-
-#### #24 碰撞检测 Y轴分桶优化
-- 将 720px 高度分为 8 个 90px 桶
-- 每颗子弹仅检测所在桶 ±1 的敌人
-- 减少 O(N×M) 遍历量
-
-### 🐛 Bug 修复 (本轮)
-- **得分双倍乘算**: `this.score` 在构造函数中已乘 `scoreMul`，hit() 中不应再次乘算。修复为 `score+=this.score+Math.floor((comboBonus+rankBonus)*diffCfg.scoreMul)`
-- **Brace 匹配**: Enemy.update() 中 turret 嵌套 else 块缺少闭合 `}`
-
----
-
----
-
-### 🚀 第15轮: Boss 血条重构 & 精英敌人系统 (#56–#59)
-
-视觉打磨 + 新敌人系统，提升战斗层次感。
-
-#### #56 Boss 血条视觉重构 (`drawBossHPBars()`)
-- **紧致边框**: 外框内边距从 +6/+24 缩减至 2px，不再"框大条小"
-- **加高血条**: 16px 高（原 12px），更易阅读
-- **受伤拖尾动画**: 利用 `hpTrail` 字段慢速追踪 `displayHp`（lerp 0.04 vs 0.12），在血条上渲染黄色拖尾段
-- **渐变色增强**: 三色梯度（绿→黄→红）增加中间色标，低血量时 5 色标
-- **3D 高光条**: 血条上半部绘制白色半透明渐变模拟立体感
-- **HP 文字居中**: 白色数字显示在血条内部而非下方
-- **危机脉冲边框**: HP < 20% 时红色脉冲描边（相位检测用 `rawHpRatio`）
-- 拖尾渐变端点修正（`barX→barX+trailWidth`），可见性阈值 0.008
-
-#### #57 精英敌人系统
-- `Enemy` 构造函数新增 `isElite = false`
-- 精英属性：3.5× HP、1.25× 尺寸、2.5× 分数、射速翻倍
-- 视觉：金色脉冲光环（4 个旋转节点）+ 进入屏幕时 `ELITE` 浮动文字
-- 死亡奖励：必定掉落 2–3 个道具 + 15 个额外金色粒子 + `ELITE KILL!` 浮动文字
-- 出场率：Lv2+ 波次3+ 10%、Lv3+ 18%、Lv4+ 30%（turret/boss 不参与）
-- `eliteAura` 使用 `% (Math.PI*2)` 包裹防止浮点溢出
-
-### 🐛 热修复 (本轮)
-- **hit() 双重闭合括号**: 精英死亡奖励块插入位置导致 `} } else if` 语法错误，修复为正确单括号
-- **精英血量显示未初始化**: `spawnWave()` 中补全 `displayHp`/`hpTrail`/`eliteAura`/`eliteAnnounced` 初始化
-- **构造函数死代码移除**: 删除了永远为 false 的精英升级块
-
----
-
-### 🚀 第16轮: 三大功能迭代 — 第5武器、Boss强化、关卡场景 (#60–#62)
-
-继第9轮 Boss 重构后再次大规模内容扩展。
-
-#### #60 第5武器：雷电光束（链式闪电）
-- WEAPON 数组扩展至 5 种：`['双发速射','散弹风暴','穿透激光','追踪导弹','雷电光束']`
-- 武器图标：🔗 (链式闪电)
-- 冷却时间：`currentWeapon===4 ? 2 : 5`，闪电射速极快
-- 发射高速向上闪电束（`velY=-20*diffCfg.bulletSpeed`）
-- **链式跳跃**：命中敌人后自动搜索附近敌机进行链式传导
-  - 使用 `Set` 追踪已链敌人，防止重复命中
-  - Lv1-2: 2跳, Lv3-4: 3跳, Lv5: 4跳, Lv6: 6跳
-  - 每跳伤害递减 (×0.7)，闪电粒子连线视觉效果
-- Lv6 终极形态：双倍闪电束 + 额外链式跳跃
-
-#### #61 Boss 攻击模式全面升级（HP<50%触发）
-| Boss | 新增机制 |
-|------|----------|
-| Lv1 装甲列车 | 地雷布置（6向扩散弹）+ 侧炮台瞄准射击 + 侧炮台视觉绘制 |
-| Lv2 隐形炮艇 | 瞬移（随机 x:60~W-120, y:60~180）+ 诱饵分身假弹 |
-| Lv3 导弹驱逐舰 | 导弹齐射（6发追踪弹）+ 旋转双激光扫射 |
-| Lv4 能量母舰 | 轨道能量球（旋转释放瞄准弹）+ 重力井牵引玩家 |
-| Lv5 核心要塞 | 绝望模式（HP<15%）：全方向24发弹幕 + 弹雨 + 屏幕震动递增 |
-
-#### #62 关卡场景系统
-- 新增 `STAGE_SCENES` 配置数组（5个关卡各独立）
-- 每关有独立背景色调：深蓝→紫色→红色→暗紫→金色
-- 星云色调 (`nebulaHue`)、星星颜色 (`starColor`)、星星速度 (`starSpeed`) 随关卡动态变化
-- 每帧渲染淡色背景层 (`ctx.fillStyle=scene.tint`)，关卡切换时自动刷新
-- 场景名称：星云深渊→电磁风暴→烈焰地狱→虚空裂隙→神域核心
-
----
-
-### 🚀 第17轮: Boss独特入场动画、新道具、Lv6终极武器 (#63–#65)
-
-#### #63 Boss 独特入场动画（5种类型）
-- 替代统一的从上滑入动画，每个 Boss 拥有独立入场方式：
-| Boss | 入场类型 | 动画 |
-|------|----------|------|
-| Lv1 装甲列车 | `slideLeft` | 从屏幕左侧滑入 + 火花粒子 |
-| Lv2 隐形炮艇 | `fadeIn` | 渐显 (alpha 0→1) + 静电粒子 |
-| Lv3 导弹驱逐舰 | `drop` | 高空坠落 + 冲击波特效 |
-| Lv4 能量母舰 | `rift` | 空间裂隙撕裂 + 漩涡粒子 |
-| Lv5 核心要塞 | `assemble` | 碎片拼接 + 核心脉冲 |
-- `entranceType` 字段在 BOSS_CONFIGS 中配置
-- Boss 构造函数新增 `this.targetX = W/2` 支持水平入场动画
-- 入场动画统一 80 帧时长，结束后设置 `entrancePhase=1`
-
-#### #64 三种新道具类型
-| 道具 | 图标 | 效果 | 持续时间 |
-|------|------|------|----------|
-| 盾牌 🛡️ | 六边形 | 8秒无敌 (`player.invincible=8*60`) | 8秒 |
-| 磁铁 🧲 | 箭头 | 道具吸附范围 170→300px | 10秒 |
-| 分数×2 💰 | 菱形 | 所有得分翻倍 | 15秒 |
-- 精英敌人死亡概率掉落新道具
-- HUD 底部新增 buff 进度条显示（盾/磁/分×2 与原有的 双倍/冰冻/速射 并列）
-- PowerUp 构造函数中 `isSpecial` 逻辑扩展支持新类型
-- 收集时生成对应颜色粒子特效和浮动文字
-
-#### #65 Lv6 终极武器形态
-- 武器等级上限从 5 提升至 6（`weaponLevel=Math.min(weaponLevel+1,6)`）
-- 五种武器 Lv6 形态：
-| 武器 | Lv6 形态 |
-|------|----------|
-| 双发速射 | 7向宽弧弹幕 |
-| 散弹风暴 | 5向 + 旋转环绕弹 |
-| 穿透激光 | 3束穿透激光（每束穿透3敌） |
-| 追踪导弹 | 子母弹（命中后爆裂） |
-| 雷电光束 | 双倍闪电束 + 6跳链式 |
-- `Bullet` 类新增 `alive` 标志位 + `penetrate` 穿透属性
-- 子弹过滤改为 `bullets.filter(b => b.alive !== false)`
-
-### 🐛 Bug 修复 (本轮)
-- **Boss 双重绘制**: `this.def.draw(ctx, this); ctx.save(); this.def.draw(ctx, this); ctx.restore()` 修复为单次 draw
-- **PowerUp 绘制重复**: 光环 switch 中盾/磁/分×2 的完整绘制代码误入，修复为仅设 fillStyle
-- **Boss 入场 targetX 未定义**: 构造函数中补上 `this.targetX = W/2`
-- **case 4 shoot() 重复代码**: 移除 Lv6 闪电块后的孤儿代码行
-
----
-
----
-
-### 🐛 第19轮: 炸弹系统修复 & 严格代码审查 (#76)
-
-**严重 BUG**: 按住 K/X 键时炸弹在瞬间全部耗尽（每帧消耗一枚），捡到的新炸弹也被立刻消耗。
-
-#### 根因分析
-- `Player.update()` 每帧执行（60fps）
-- `if ((keys['k']||keys['x']) && bombs>0) { useBomb(); bombs--; }` 没有清除键状态
-- 与 M 键（武器切换）不同，M 键有 `keys['m']=false` 的一键触发保护
-- 炸弹键缺少同样的保护，导致按住时每帧触发
-
-#### 修复方案
-```javascript
-// Before:
-if ((keys['k']||keys['x']) && bombs>0) { useBomb(); bombs--; }
-
-// After:
-if ((keys['k']||keys['x']) && bombs>0) { useBomb(); bombs--; keys['k']=false; keys['x']=false; }
-```
-- 使用炸弹后立即清除两个键的状态
-- 用户需要松开再按才能用下一枚炸弹
-- 与 M 键武器切换采用相同模式
-
----
-
-### 🚀 第20轮: v1.0正式版 — 去重清理 & 作弊模式 (#77–#87)
-
-经过严格代码审查和浏览器端到端测试，推出首个正式版本。
-
-#### #77–#80 重复代码清理（4处）
-| 位置 | 问题 | 影响 |
-|------|------|------|
-| `initGame()` | Combo 变量初始化重复两次 | 无功能影响但冗余 |
-| Combo 重置行（4处） | `comboBarTimer/Multiplier/Milestone` 初始化出现两次 | 性能浪费 |
-| `drawHUD()` | Combo 倍率文字绘制块出现两次 | 视觉双重叠加 |
-| `drawHUD()` | Combo 渐变条绘制块出现两次 | 条宽度被覆盖 |
-| Lv4 Boss draw() | 裂痕光环环绘制出现两次 | 视觉双重叠加 |
-
-#### #81–#87 作弊模式 (G键无敌)
-
-为方便测试和休闲玩家体验全部内容，添加 G 键作弊模式：
-
-| # | 功能 | 细节 |
-|---|------|------|
-| 81 | 全局变量 | `let godMode = false;` |
-| 82 | G键切换 | `godMode = !godMode; keys['g']=false;` 遵循一键触发模式，激活时重置生命和炸弹 |
-| 83 | 无敌保护 | `playerHit()` 顶部 `if (godMode) return;` 完全免疫所有伤害 |
-| 84 | 无限炸弹 | `if (!godMode) bombs--; else bombs=5;` 使用后炸弹始终重置为5 |
-| 85 | HUD指示 | 底部状态栏上方显示 `⚡ GOD MODE ⚡` 金色文字 |
-| 86 | 重开重置 | `initGame()` 中 `godMode = false;` 防止作弊状态跨游戏继承 |
-| 87 | 视觉光环 | 金色脉冲双环 + 8个旋转星节点，与无敌护盾视觉共存 |
-
-**作弊模式规则**：
-- 仅在 PLAYING 状态可切换
-- 激活时：完全无敌 + 无限炸弹（每用一次重置为5）+ 金色光环
-- 关闭时：生命/炸弹保留当前值，需自行恢复
-- 重开或返回菜单自动关闭
-
----
-
-## 问题清单 / 修复记录
-
-| # | 问题 | 严重度 | 状态 |
-|---|------|--------|------|
-| 1~13 | 前7轮所有问题 | - | ✅ 全部已修复 |
-| 14 | 无自机判定点显示 | 高 | ✅ 已修复 |
-| 15 | 无擦弹 Graze 系统 | 中 | ✅ 已修复 |
-| 16 | 无低速移动模式 | 中 | ✅ 已修复 |
-| 17 | 无 Rank 动态难度 | 中 | ✅ 已修复 |
-| 18 | 道具无磁吸 | 低 | ✅ 已修复 |
-| 19 | 得分系统单一 | 低 | ✅ 已修复 |
-| 20 | 无地面目标层 | 中 | ✅ 已修复 |
-| 21 | 无爆炸碎片 | 低 | ✅ 已修复 |
-| 22 | Boss 出场无演出 | 中 | ✅ 已修复 |
-| 23 | 粒子无上限 | 低 | ✅ 已修复 |
-| 24 | 碰撞检测无优化 | 低 | ✅ 已修复 |
-| 25 | 暂停无菜单和音量控制 | 高 | ✅ 已修复 |
-| 26 | 无杀敌浮动得分文字 | 中 | ✅ 已修复 |
-| 27 | Graze不与Combo联动 | 中 | ✅ 已修复 |
-| 28 | Rank隐藏无可视化 | 中 | ✅ 已修复 |
-| 29 | 5个关卡用同一Boss | 高 | ✅ 已修复 |
-| 30 | Boss出场不显示名称 | 低 | ✅ 已修复 |
-| 31 | 音效音量滑块不生效 | 高 | ✅ 已修复 |
-| 32 | 浮动文字内存泄漏 | 中 | ✅ 已修复 |
-| 33 | Energy Carrier无人机类型错误 | 中 | ✅ 已修复 |
-| 34 | drawHUD() 缺少闭合 } | 致命 | ✅ 已修复 |
-| 35 | Boss 血条双重 translate | 高 | ✅ 已修复 |
-| 36 | 无人机类型过滤用不存在字段 | 高 | ✅ 已修复 |
-| 37 | Boss HP 无平滑过渡动画 | 中 | ✅ 已修复 |
-| 38 | Boss 受伤无闪烁反馈 | 中 | ✅ 已修复 |
-| 39 | Boss1 弹幕模式单调 | 中 | ✅ 已修复 |
-| 40 | Boss2 弹幕模式单调 | 中 | ✅ 已修复 |
-| 41 | Boss3 弹幕模式单调 | 中 | ✅ 已修复 |
-| 42 | Boss4 弹幕模式单调 | 中 | ✅ 已修复 |
-| 43 | Boss5 弹幕模式单调 | 中 | ✅ 已修复 |
-| 44 | Boss 战无专属音效 | 中 | ✅ 已修复 |
-| 45 | Boss 攻击无音效反馈 | 中 | ✅ 已修复 |
-| 46 | 血条相位切换无渐变 | 低 | ✅ 已修复 |
-| 47 | 血条受伤无粒子特效 | 低 | ✅ 已修复 |
-| 48 | 血条危机无脉冲提示 | 低 | ✅ 已修复 |
-| 49 | 缺少分裂敌人类型 | 中 | ✅ 已修复 |
-| 50 | 缺少护盾敌人类型 | 中 | ✅ 已修复 |
-| 51 | 缺少狙击手敌人类型 | 中 | ✅ 已修复 |
-| 52 | 波次系统未包含新敌人 | 中 | ✅ 已修复 |
-| 53 | Boss 血条浮动在头顶 | 中 | ✅ 已修复 |
-| 54 | rawHpRatio 声明顺序错误 | 致命 | ✅ 已修复 |
-| 55 | 血条屏幕震动未补偿 | 中 | ✅ 已修复 |
-| 56 | Boss 血条边框过大 | 中 | ✅ 已修复 |
-| 57 | 血条无受伤拖尾动画 | 低 | ✅ 已修复 |
-| 58 | 精英敌人系统缺失 | 中 | ✅ 已修复 |
-| 59 | hit() 双重闭合括号 | 致命 | ✅ 已修复 |
-| 60 | 第5武器雷电光束 | 中 | ✅ 已修复 |
-| 61 | Boss HP<50% 新增攻击模式 | 中 | ✅ 已修复 |
-| 62 | 关卡场景系统缺失 | 低 | ✅ 已修复 |
-| 63 | Boss 入场动画单调 | 中 | ✅ 已修复 |
-| 64 | 新道具盾/磁/分×2 | 中 | ✅ 已修复 |
-| 65 | Lv6 终极武器形态 | 中 | ✅ 已修复 |
-| 66 | Boss双重绘制 (draw x2) | 高 | ✅ 已修复 |
-| 67 | PowerUp绘制重复case | 中 | ✅ 已修复 |
-| 68 | Boss入场targetX未定义 | 高 | ✅ 已修复 |
-| 69 | shoot() case 4孤儿代码 | 中 | ✅ 已修复 |
-| 70 | combo/wave变量重复声明 | 高 | ✅ 已修复 |
-| 71 | Lv4裂痕光环代码块重复 | 中 | ✅ 已修复 |
-| 72 | Combo倍率未参与计分 | 高 | ✅ 已修复 |
-| 73 | Lv3排气粒子过频(每帧4个) | 中 | ✅ 已修复 |
-| 74 | comboMultiplier冗余计算 | 低 | ✅ 已修复 |
-| 75 | spawnWave公告块重复 | 中 | ✅ 已修复 |
-| 76 | 按住炸弹键瞬间耗尽所有炸弹 | 致命 | ✅ 已修复 |
-| 77 | initGame() combo变量重复初始化 | 低 | ✅ 已修复 |
-| 78 | 4处combo重置行重复 | 低 | ✅ 已修复 |
-| 79 | drawHUD() combo倍率文字重复 | 中 | ✅ 已修复 |
-| 80 | drawHUD() combo渐变条重复 | 中 | ✅ 已修复 |
-| 81 | Lv4 Boss裂痕光环环重复绘制 | 中 | ✅ 已修复 |
-| 82 | 无作弊模式供测试/休闲 | 中 | ✅ 已修复 |
-| 83 | 作弊G键无限炸弹 | 中 | ✅ 已修复 |
-| 84 | 作弊无敌保护 | 中 | ✅ 已修复 |
-| 85 | HUD作弊指示器 | 低 | ✅ 已修复 |
-| 86 | 重开时作弊状态未重置 | 中 | ✅ 已修复 |
-| 87 | 作弊视觉光环 | 低 | ✅ 已修复 |
-| 88 | addEnemyBullet 无限递归导致游戏黑屏卡死 | 致命 | ✅ 已修复 |
-| 89 | ObjectPool 缺少 new 关键字导致类构造失败 | 致命 | ✅ 已修复 |
-| 90 | 渲染层仍用旧数组遍历，对象池更新未生效 | 高 | ✅ 已修复 |
-| 91 | 碰撞检测遍历旧数组而非 pool.active | 高 | ✅ 已修复 |
-| 92 | useBomb/startGame 直接清空数组而非 pool.clear() | 高 | ✅ 已修复 |
-| 93 | 碎片粒子绕过对象池直接 push | 中 | ✅ 已修复 |
-| 94 | startGame() 缺少 BGM 初始化 | 中 | ✅ 已修复 |
-| 95 | 清理无用全局变量 bullets/enemyBullets/particles/hudParticles | 低 | ✅ 已修复 |
-| 96 | 游戏主循环缺少 player.update() → 机体被击后永久消失 | 致命 | ✅ 已修复 |
-| 97 | bulletPool.active[N] 脆引用 → 对象池满时指向错误子弹 | 中 | ✅ 已修复 |
-| 98 | STAGE_THEMES 尾随逗号创建空槽位 → Stage 5 Boss击杀后游戏卡死 | 致命 | ✅ 已修复 |
-| 99 | Stage 5 过渡文字显示为'最终决战' → 未考虑第6/7关 | 中 | ✅ 已修复 |
-| 100 | 暂停页面 UI 丑陋、元素偏右 | 低 | ✅ 已修复 |
-| 101 | Player.shoot() 过长 (~80行) → 重构为5个独立武器方法 | 低 | ✅ 已修复 |
-| 102 | drawStageTransition else块统一处理 Stage 5-7 过渡 | 中 | ✅ 已修复 |
-| 103 | useBomb() 不负责递减bombs → 炸弹无限使用 | 致命 | ✅ 已修复 |
-| 104 | HUD 生命/炸弹emoji循环被武器信息遮挡 | 中 | ✅ 已修复 |
-| 105 | ObjectPool.update() splice O(n²) 性能瓶颈 | 高 | ✅ 已修复 |
-| 106 | enemies.filter() 每帧创建新数组 GC压力 | 高 | ✅ 已修复 |
-| 107 | pool.draw() 无离屏裁剪 | 低 | ✅ 已修复 |
-| 108 | Bullet/EnemyBullet draw() 各自 ctx.save/restore → 性能瓶颈 | 高 | ✅ 已修复 |
-| 109 | 武器全局变量 weaponLevel/currentWeapon 散落各处 | 中 | ✅ 已修复 |
-
----
-
-### 🚀 第18轮: Boss阶段视觉、Combo UI、波次公告 (#66–#68)
-
-视觉表现力深度提升，强化玩家反馈循环。
-
-#### #66 Boss 阶段2视觉转换（5种效果）
-| Boss | 阶段2特效 | 细节 |
-|------|-----------|------|
-| Lv1 装甲列车 | 红光泄露+火花 | 红色脉冲叠加层 + shadowBlur + 火花粒子四溅 |
-| Lv2 隐形炮艇 | 扭曲光环+等离子泄漏 | 虚线旋转光环 + 主动闪烁 + 粒子泄漏 |
-| Lv3 导弹驱逐舰 | 装甲炽热+排气火焰 | 炽热辉光 + 阴影模糊 + 双引擎排气粒子（节流3帧） |
-| Lv4 能量母舰 | 裂痕光环+裂隙粒子 | 裂纹虚线环 + 随机方位裂隙粒子喷射 |
-| Lv5 核心要塞 | 核心脉冲 | 核心光球正弦缩放 + phase 依赖 shadowBlur + 颜色渐变 |
-- 所有效果使用 `frameCount` 驱动正弦动画，无额外状态管理
-- 粒子生成限制频率（每3-5帧），避免淹没粒子池
-
-#### #67 增强 Combo UI
-- **Combo 条**: 顶部 HUD 下方渐变色计时条（蓝→黄→红），计时180帧可见
-- **Combo 倍率显示**: `x1.0`–`x5.0` 实时显示在连击计数旁
-- **里程碑庆祝**: x5 触发短暂光效，x10 触发全屏金色闪光 + COMBO x10! 文字动画 + 20个金色粒子爆发
-- **计分集成**: `comboMultiplier` 实际影响得分公式 `score * sMul * cMul`
-
-#### #68 波次公告系统
-- 每波开始时显示 `WAVE N` 浮空文字（青色发光 + 缩放动画）
-- 12个粒子从环形位置收敛至屏幕中央
-- 持续60帧后自动消失
-- 波次 >5（Boss波）不触发公告
-
-### 🐛 Bug 修复 (本轮)
-- **重复变量声明**: combo/wave 变量声明被 iterate_v3 二次运行重复插入，清理为单一声明
-- **重复代码块**: Lv4 裂痕光环块 / spawnWave 公告块 / enemy.hit() 中 combo 里程碑块 出现两次，已去重
-- **Combo 倍率未计分**: `comboMultiplier` 仅在 HUD 显示而未参与得分公式，现已集成
-- **Lv3 排气粒子过频**: 每帧4粒子降至每3帧4粒子
-- **冗余计算**: `comboMultiplier` 在 `enemy.hit()` 和 `gameLoop` 中重复计算，移除前者
-
----
-
-## 技术要点 / 踩坑记录
-
-1. **Canvas 缩放**: 内部分辨率 480×720 不变, CSS 用 `aspect-ratio` + `height:94vh` 自适应。
-2. **过渡动画时机**: `gameLoop()` 中过渡动画 block 必须放在敌人更新之前。
-3. **Boss 阶段**: 阶段切换在 `update()` 中按 `hp/maxHp` 比例判定。
-4. **Rank 系统**: 影响敌弹速度和射速的频率控制，需同时修改 Enemy.update() 和 bossAttack()。
-5. **分层渲染**: 地面目标必须绘制在星空之后、空中敌人之前，体现纵深。
-6. **擦弹判定**: grazeBox 包围 hitbox 但不重叠，使用 `!rectsCollide(pH, ...)` 避免双倍计数。
-7. **对象池替代**: 使用粒子数量上限 (350→300) 代替完整对象池，简单有效。
-8. **Boss 数据驱动**: `BOSS_CONFIGS` 数组使新增 Boss 只需添加配置项，无需修改核心 Enemy 类。
-9. **委托模式**: Boss 的 `attack/update/draw` 通过 `this.def.xxx(this)` 委托，保持核心类干净。
-10. **hudParticles 独立系统**: HUD 血条粒子使用独立数组，不混入游戏世界 particles，避免碰撞检测等逻辑干扰。
-11. **新敌人入口动画**: sniper 使用 `entrancePhase` (0→1) 实现从屏幕侧边滑入的入场动画，splitter/shielded/sniper 均使用 `spawnOffsetX/Y` 从屏幕外进入。
-12. **对象池 acquire() 返回值**: 始终使用 `acquire()` 的返回值并做 null 检查，避免 `pool.active[pool.active.length-1]` 脆引用模式。
-13. **player.update() 至关重要**: 游戏主循环中必须调用玩家 update，否则 invincible 计时器不递减、输入不处理、射击不触发。
-
----
-
-### 🚀 第13轮: Boss 音效、血条视觉深化 & 新敌人类型 (#44–#52)
-
-全面提升 Boss 战的音频沉浸感、血条视觉表现力，以及引入三种全新敌人类型。
-
-#### #44 Boss 专属音效系统 (6个)
-- `sfxBossSniper()`: 高频哨声 (1200→1800Hz sine)，用于 Boss 狙击弹
-- `sfxBossRing()`: 低频轰鸣 (90→40Hz sawtooth)，用于环形扩散弹
-- `sfxBossLaser()`: 激光嗡鸣 (800→400→800Hz square 扫频)，用于激光扫射
-- `sfxBossTracking()`: 下行音 (600→150Hz square)，用于追踪弹发射
-- `sfxBossDamage()`: 金属撞击 (60→30Hz sawtooth)，Boss 受伤时触发
-- `sfxBossPhaseShift()`: 上升音 (200→900Hz sine)，Boss 换阶段时触发
-
-#### #45 Boss 攻击音效集成
-- Boss1：自机狙击 → `sfxBossSniper()`，扇形弹 → `sfxBossRing()`
-- Boss2：圆形扩散 → `sfxBossRing()`，隐身狙击 → `sfxBossSniper()`
-- Boss3：追踪弹 → `sfxBossTracking()`，双环扩散 → `sfxBossRing()`
-- Boss4：激光扫射 → `sfxBossLaser()`，扩张环 → `sfxBossRing()`
-- Boss5：追踪弹 → `sfxBossTracking()`，环形弹→ `sfxBossRing()`，天降弹雨 → `sfxBossRing()`
-- `Enemy.update()` 中 `hp < lastHp` 时触发 `sfxBossDamage()`
-- `Enemy.update()` 中 `prevPhase !== phase` 时触发 `sfxBossPhaseShift()`
-
-#### #46 血条相位颜色渐变过渡
-- `drawHUD()` 中新增 `getPhaseColor(phase)` 辅助函数
-- 根据 `phaseTransitionTimer` 在前后相位颜色之间做 RGB 三通道 lerp
-- 颜色方案：阶段0=红橙(#f44→#f80)，阶段1=橙黄(#f80→#ff0)，阶段2=亮红(#f22)
-- 过渡时长 30 帧，平滑渐变
-
-#### #47 血条受伤粒子泄漏
-- 新增全局 `hudParticles` 独立数组（不与游戏世界 particles 混用）
-- Boss 受伤时从血条右边缘喷射 6~12 个橙色/白色火花粒子
-- 粒子物理：右向喷射 + 微小重力 + alpha 衰减 + 生命周期 20~30 帧
-- `gameLoop()` 中渲染 hudParticles（在世界坐标系之上，HUD 层之内）
-
-#### #48 血条危机脉冲边框
-- Boss HP < 20% 时血条外框脉冲红色
-- `pulseAlpha` 通过 `Math.sin(frameCount*0.15)*0.5+0.5` 实现正弦脉动
-- 红色描边 `lineWidth=4`，在血条外围额外 6px 区域绘制
-- `rawHpRatio` 变量重新引入用于判定危机状态
-
-#### #49 分裂敌人 (Splitter)
-- 类型 `'splitter'`，球形外观，发射自机狙击弹
-- 速度中等 (2.0+)，空中单位，HP 较高 (4×基础值)
-- 死亡时生成 2~3 个迷你 Scout（`splitCount=2+Math.floor(Math.random()*2)`)  
-- 子敌人属性：小尺寸 (16×16)、低 HP (ceil(level/2))、高速 (3.5+level*0.5)、#a4f 紫色
-- `splitSpawned=true` 标记防止子敌人再次分裂
-- 子敌人设置 `splitSpawned=true` 防止连锁分裂
-
-#### #50 护盾敌人 (Shielded)
-- 类型 `'shielded'`，重甲外观，3 层护盾
-- `shieldHits=3` 计数器，`shieldMax=3`
-- 有护盾时：子弹命中 +1 `shieldHits`，生成青色粒子，不扣 HP，不触发击退
-- 护盾破后：`shieldHits=0` 后续攻击正常扣 HP
-- draw：护盾活跃时绘制蓝色半透明光晕圆环 (`shieldHits/shieldMax` 透明度)
-- 发射 3 向自机狙击弹
-- 地面单位 (isGround=true)
-
-#### #51 狙击手 (Sniper)
-- 类型 `'sniper'`，长条形外观 (18×42)，红色
-- 侧方入场动画：`entrancePhase=0` 从屏幕右侧外 (`spawnOffsetX=60`) 滑入
-- `entrancePhase=1` 到达目标位置 (y≈130)，横向漂移 (`x+=sin(timer*0.02)*0.6`)
-- 狙击模式：每 90 帧发射 3 发慢速追踪弹（追踪玩家位置）
-- 中等 HP (ceil(3+level)*hpMul)，低速度
-- 入场阶段不受伤害 (`entrancePhase<1` 时 hit() 直接 return)
-
-#### #52 波次系统 & 难度配置更新
-- `spawnWave()` 中 Lv2+ 追加 splitter 生成分支，Lv3+ 追加 shielded 分支
-- `diffCfg.typeBias` 中 EASY/NORMAL/HARD 三档增加 splitter/shielded/sniper 权重
-- 新敌人随关卡等级和难度递增逐渐出现
-
-### 🐛 Bug 修复 (本轮)
-- **sfxBossDamage 触发时序**: `lastHp` 赋值在伤害检测之前，导致 `hp < lastHp` 永假。修复为先保存旧值再更新
-- **脉冲边框渲染顺序**: 脉冲边框需在血条背景填充之前绘制，避免被覆盖
-- **splitter 子敌人连锁分裂**: 子敌人设置 `splitSpawned=true` 防止递归分裂
-- **sniper 入场无敌**: 入场阶段 `entrancePhase<1` 不受伤害
-- **hudParticles 独立数组**: 避免混入游戏世界 particles 被碰撞检测和粒子裁剪逻辑干扰
-
----
-
-### 🐛 第14轮: Boss 血条重生修复 (#53–#55)
-
-**致命 BUG**: `drawHUD()` 中 Boss 血条的 `rawHpRatio` 变量在声明前被使用 (line 2710 使用, line 2724 声明)，导致 `ReferenceError` 崩溃整个 HUD 渲染。同时用户需要血条浮动在 Boss 头顶而非固定在屏幕顶部 HUD 区域。
-
-#### #53 血条架构重构
-- **删除**: `drawHUD()` 中 ~110 行固定位置 Boss 血条代码（存在 rawHpRatio 声明顺序错误）
-- **新建**: 独立函数 `drawBossHPBars()` (~110 行)，遍历所有存活 Boss 在屏幕空间绘制浮动血条
-- **调用点**: 从 `drawHUD()` 末尾调用，位于 Rank 仪表之前
-
-#### #54 三个运行时修复
-- **护盾条件收紧**: `boss.entrancePhase === 0 && boss.y < 0` → `boss.entrancePhase !== 1`，确保入场动画完全结束后才显示血条
-- **屏幕震动补偿**: `barX/barY` 及所有文字位置（名称/HP/相位标签）加上 `shakeX/shakeY` 偏移，因为 HUD 绘制在 `ctx.restore()` 之后不受震动影响
-- **ctx 状态隔离**: 每个 Boss 的血条绘制包裹在 `ctx.save()/ctx.restore()` 中，防止 `textAlign`/`lineWidth`/`shadowBlur`/`globalAlpha` 等状态泄漏到后续 HUD 元素
-
-#### #55 验证
-- 浏览器测试：无 JavaScript 错误，`rawHpRatio` ReferenceError 已消除
-- Code review：所有三处修复确认正确
+本地双人、练习模式、回放、在线榜、周目 NG+ 等见早期路线图，**均未排期**。新功能继续遵守单文件约束。
