@@ -1,6 +1,6 @@
 # Sky Thunder (雷电风暴) — Dev Log
 
-> 最后更新: 2026-06-20 · **v2.0.1** · 单文件 `raiden-game.html`（Canvas 2D + Web Audio，零依赖）
+> 最后更新: 2026-06-20 · **v2.0.2** · 单文件 `raiden-game.html`（Canvas 2D + Web Audio，零依赖）
 
 ---
 
@@ -8,6 +8,7 @@
 
 | 版本 | 要点 |
 |------|------|
+| **v2.0.2** | spawn 改帧驱动队列，修复暂停覆盖 setTimeout 导致波次卡死 |
 | **v2.0.1** | 穿透激光修复、`beginPlaySession()` 开局流程、菜单/帮助/暂停文案对齐 |
 | **v2.0** | 三档难度机制分轨、敌弹四维缩放、分难度高分榜、Hard 自杀弹 |
 | **v1.9.1** | 手机端暂停/武器/炸弹按钮、菜单战机锚点、冲击波反馈 |
@@ -17,6 +18,29 @@
 **硬性约束（不变）**：运行时只有 `raiden-game.html`，不引入框架、构建链、外部素材包。`smoke-check.mjs` 仅开发验证用。
 
 **日志与代码不一致（勿当已实现）**：成就系统、每日挑战、暂停页改难度、BGM 音量滑块、独立设置页。见 v1.6/v1.7 历史，当前单文件未落地。
+
+---
+
+## v2.0.2 — spawn 队列帧驱动修复 (2026-06-20)
+
+**症状**：极少数情况下，屏幕敌人全清后游戏不推进，无新敌人刷新，永久停摆。
+
+**根因**：`spawnWave()` 在入口立即把 `waveEnemiesRemaining` 设为 `numEnemies`，但敌人靠 `setTimeout` 排队生成。暂停期间所有 `setTimeout` 回调照常触发，但被 `runId !== gameRunId || gameState !== STATE.PLAYING` 早退 `return` —— 既不 push 敌人，也不递减计数。结果 `waveEnemiesRemaining` 永远卡在 `numEnemies`，`checkWaveComplete()` 的兜底条件 `waveEnemiesRemaining<=0 && enemies.length===0` 无法满足，下一波永远不会被触发。
+
+**修复**：用帧驱动 `spawnQueue` 替代 `setTimeout`。
+
+- `spawnWave()` 不再排队 `setTimeout`，而是把每个敌人作为一条 `{ runId, delay, type, level, x, y0, isElite }` 入队。
+- `processSpawnQueue()` 在 `gameLoop` 的 `enemies.filter` 之后每帧推进 `delay`，到点 `new Enemy()` 并应用精英属性后 `enemies.push`。
+- 暂停期间 `gameLoop` 早退，`processSpawnQueue` 自然不调用，队列停滞；恢复后从断点继续生成，`waveEnemiesRemaining` 与实际敌人数永远同步。
+- `initGame` / `showMenu` / `levelComplete` 三处清空 `spawnQueue`，防止跨局残留。
+
+**改动范围**：1 文件 +51/-33 行。
+
+**验证**：
+- `node smoke-check.mjs` 通过（语法/逻辑/文案/DOM）。
+- Playwright 实测 EASY + god mode + 持续开火：暂停 6 秒（覆盖原 `setTimeout` 窗口）→ 恢复，画面从 571 像素恢复到 17094 像素，敌人正常刷出；二次暂停 4 秒 + 恢复无累积卡死；15+ 秒长期运行画面持续刷新（200ms 内 6374 像素变化）。
+
+**回归守卫**：项目无单元测试框架；smoke-check 不覆盖运行时暂停-恢复行为，未来同类 bug 需手动验证或补 e2e。
 
 ---
 
