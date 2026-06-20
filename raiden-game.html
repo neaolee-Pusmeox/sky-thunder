@@ -1159,7 +1159,7 @@ function showMenu() {
   gameRunId++;
   gameState = STATE.MENU; stopBGM();
   bulletPool.clear(); enemyBulletPool.clear(); particlePool.clear(); hudParticlePool.clear();
-  enemies = []; powerUps = []; floatTexts = []; shockwaves = [];
+  enemies = []; powerUps = []; floatTexts = []; shockwaves = []; spawnQueue = [];
 }
 
 // 浮动文字系统
@@ -1232,6 +1232,9 @@ let waveAnnounceTimer = 0;
 let waveAnnounceText = '';
 let waveAnnounceParticles = [];
 let gameRunId = 0;
+// 帧驱动敌人 spawn 队列（替代 setTimeout，暂停时自动停滞）
+// entry: { runId, delay, type, level, eliteChance }
+let spawnQueue = [];
 
 let bombFlashTimer = 0;
 let stageClearTimer = 0;
@@ -3718,36 +3721,50 @@ function spawnWave() {
   // 根据难度构建敌人类型池
   const types = buildWaveTypePool(level);
   for (let i=0; i<numEnemies; i++) {
-    setTimeout(()=>{
-      if (runId !== gameRunId || gameState!==STATE.PLAYING) return;
-      const type=types[Math.floor(Math.random()*types.length)];
-      const x=35+Math.random()*(W-70);
-      const enemy = new Enemy(type, x, -35-Math.random()*40, level);
-      // 精英出现率：随关卡和波次递增，并按难度缩放
-      let eliteChance = (level >= 4) ? 0.25 : (level >= 3 && wave >= 4) ? 0.14 : (level >= 2 && wave >= 3) ? 0.08 : 0;
-      eliteChance *= diffCfg.eliteMul || 1;
-      if (eliteChance > 0 && Math.random() < eliteChance && type !== 'turret' && type !== 'boss') {
-        enemy.isElite = true;
-        // 重新计算精英属性
-        enemy.hp = Math.ceil(enemy.hp * 2.5);
-        enemy.maxHp = enemy.hp;
-        enemy.displayHp = enemy.hp;
-        enemy.hpTrail = enemy.hp;
-        enemy.score = Math.floor(enemy.score * 2.5);
-        enemy.w = Math.ceil(enemy.w * 1.25);
-        enemy.h = Math.ceil(enemy.h * 1.25);
-        enemy.eliteAura = 0;
-        enemy.eliteAnnounced = false;
-        if (enemy.color === '#f44') enemy.color = '#f22';
-        else if (enemy.color === '#f80') enemy.color = '#f60';
-        else if (enemy.color === '#ff0') enemy.color = '#ff4';
-        else if (enemy.color === '#f6a') enemy.color = '#f4c';
-        else if (enemy.color === '#5cf') enemy.color = '#3ef';
-        else if (enemy.color === '#c8f') enemy.color = '#d4f';
-        // 精英标记将在进入屏幕后显示（利用入场延迟）
-      }
-      enemies.push(enemy);
-    }, i*280+Math.random()*180);
+    const type=types[Math.floor(Math.random()*types.length)];
+    let eliteChance = (level >= 4) ? 0.25 : (level >= 3 && wave >= 4) ? 0.14 : (level >= 2 && wave >= 3) ? 0.08 : 0;
+    eliteChance *= diffCfg.eliteMul || 1;
+    const isElite = eliteChance > 0 && Math.random() < eliteChance && type !== 'turret' && type !== 'boss';
+    // 帧驱动排队：暂停期间队列自动停滞，恢复后继续生成
+    spawnQueue.push({
+      runId,
+      delay: i*17 + Math.floor(Math.random()*11),
+      type, level,
+      x: 35+Math.random()*(W-70), y0: -35-Math.random()*40,
+      isElite
+    });
+  }
+}
+
+// 帧驱动 spawn：每帧推进队列，触发时构造 Enemy 并应用精英属性
+function processSpawnQueue() {
+  if (spawnQueue.length === 0) return;
+  for (let i = spawnQueue.length - 1; i >= 0; i--) {
+    const q = spawnQueue[i];
+    if (q.runId !== gameRunId) { spawnQueue.splice(i, 1); continue; }
+    q.delay--;
+    if (q.delay > 0) continue;
+    const enemy = new Enemy(q.type, q.x, q.y0, q.level);
+    if (q.isElite) {
+      enemy.isElite = true;
+      enemy.hp = Math.ceil(enemy.hp * 2.5);
+      enemy.maxHp = enemy.hp;
+      enemy.displayHp = enemy.hp;
+      enemy.hpTrail = enemy.hp;
+      enemy.score = Math.floor(enemy.score * 2.5);
+      enemy.w = Math.ceil(enemy.w * 1.25);
+      enemy.h = Math.ceil(enemy.h * 1.25);
+      enemy.eliteAura = 0;
+      enemy.eliteAnnounced = false;
+      if (enemy.color === '#f44') enemy.color = '#f22';
+      else if (enemy.color === '#f80') enemy.color = '#f60';
+      else if (enemy.color === '#ff0') enemy.color = '#ff4';
+      else if (enemy.color === '#f6a') enemy.color = '#f4c';
+      else if (enemy.color === '#5cf') enemy.color = '#3ef';
+      else if (enemy.color === '#c8f') enemy.color = '#d4f';
+    }
+    enemies.push(enemy);
+    spawnQueue.splice(i, 1);
   }
 }
 
@@ -3770,7 +3787,7 @@ function levelComplete() {
   player.heatLevel = 0;
   stageClearTimer = 90; stageClearLevel = level;
   level++; wave = 0; bossActive = false; combo = 0;
-  enemyBulletPool.clear(); enemies = [];
+  enemyBulletPool.clear(); enemies = []; spawnQueue = [];
   waveEnemiesRemaining = 1;
   getScene();
   // 升级特效
@@ -4010,7 +4027,7 @@ function initGame() {
   weaponMgr.reset();
   level=1; wave=0;
   getScene();
-  waveEnemiesRemaining=0;
+  waveEnemiesRemaining=0; spawnQueue = [];
   frameCount=0; shakeAmount=0; shakeDuration=0;
   bossActive=false; killedCount=0; comboResetTimer=0; comboBarTimer=0; comboMultiplier=1.0; comboMilestoneTimer=0; comboMilestoneLevel=0;
   comboPopupTimer=0; weaponMgr.notifyTimer=0;
@@ -4066,6 +4083,7 @@ function gameLoop() {
   enemies=enemies.filter(e=>e.update());
   waveEnemiesRemaining -= (enemiesBefore-enemies.length);
   waveEnemiesRemaining = Math.max(0, waveEnemiesRemaining);
+  processSpawnQueue();
   powerUps=powerUps.filter(p=>p.update());
   particlePool.update();
   updateShockwaves();
