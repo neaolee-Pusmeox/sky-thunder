@@ -1,3 +1,5 @@
+<img width="1024" height="1024" alt="image" src="https://github.com/user-attachments/assets/68115eb7-a442-485f-90a3-ce88e4ffa5f4" />
+
 # SKY THUNDER · 雷电风暴
 
 **一款打开就能玩的竖版弹幕射击游戏。** 没有安装包，没有加载条，双击 HTML 立刻上天。
